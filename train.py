@@ -229,8 +229,9 @@ def train(args: argparse.Namespace) -> None:
             f"{ic_str}"
         )
 
-        # Checkpoint: prefer IC when available, fall back to val_loss
-        if use_ic_checkpoint and not math.isnan(val_ic):
+        # Checkpoint: prefer IC when available after warmup (skip early noisy IC spikes)
+        ic_warmup_epochs = 20
+        if use_ic_checkpoint and not math.isnan(val_ic) and (epoch + 1) >= ic_warmup_epochs:
             is_best = val_ic > best_val_ic
             if is_best:
                 best_val_ic = val_ic
@@ -258,6 +259,13 @@ def train(args: argparse.Namespace) -> None:
                 logger.info(f"  ↳ New best model (val_loss={val_loss:.4f})")
 
     logger.info("Training complete.")
+    # Load best checkpoint before running experiments
+    best_ckpt_path = ckpt_dir / "best.pt"
+    if best_ckpt_path.exists():
+        logger.info(f"Loading best checkpoint for experiments: {best_ckpt_path}")
+        best_ckpt = torch.load(best_ckpt_path, map_location=device)
+        jepa.load_state_dict(best_ckpt["model"])
+        logger.info(f"  best epoch={best_ckpt.get('epoch', '?')}, val_ic={best_ckpt.get('best_val_ic', float('nan')):+.4f}")
     _run_all_experiments(jepa, splits, train_ds, val_ds, test_ds, config, device)
 
 

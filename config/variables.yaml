@@ -380,14 +380,6 @@ series:
     role: both
 
   # ── Bridge Series ─────────────────────────────────────────────────────────
-  WEI:
-    source: fred
-    id: WEI
-    frequency: weekly
-    transform: level
-    pillar: null
-    role: input
-
   CFNAI:
     source: fred
     id: CFNAI

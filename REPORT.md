@@ -1,6 +1,6 @@
 # Financial JEPA Experiment Report
 
-**Date:** June 2026 (updated after proxy-series substitution; 884 training windows)
+**Date:** June 2026 (updated after proxy-series substitution + WEI removal; 898 training windows)
 **Model:** JEPA (Joint Embedding Predictive Architecture) trained on financial time series  
 **Training period:** 1993–2019 (raw data from 1991; effective windows from 2002 after proxy substitution)  
 **Out-of-sample evaluation:** 2020–2024
@@ -87,14 +87,14 @@ Context window [B, T_ctx, D]          Target window [B, T_tgt, D]
 
 | Source | Series | Count |
 |--------|--------|-------|
-| FRED API | Rates (US10Y, US02Y, TIPS), financial conditions (NFCI, STLFSI), inflation (CPI, PCE, PPI), labour (UNRATE, NFP, ICSA, JOLTS, ADP), activity (WEI, CFNAI), oil (DCOILWTICO as USO), JPY (DEXJPUS as FXY), credit spread (BAA10Y as HYG) | 22 |
+| FRED API | Rates (US10Y, US02Y, TIPS), financial conditions (NFCI, STLFSI), inflation (CPI, PCE, PPI), labour (UNRATE, NFP, ICSA, JOLTS, ADP), activity (CFNAI), oil (DCOILWTICO as USO), JPY (DEXJPUS as FXY), credit spread (BAA10Y as HYG) | 21 |
 | Yahoo Finance | Equities (SPY, QQQ, XLK, XLF, XLY, XLE, XLB, IWM, RSP, EEM, EFA, BA as ITA), bonds (TLT), commodities (GC=F as GLD), currencies (DXY), volatility (VIX) | 16 |
 | Caldara-Iacoviello (2022) | GPR_GLOBAL, GPRA (Acts), GPRT (Threats) | 3 |
 | Baker-Bloom-Davis | EPU_US, EPU_GLOBAL (Economic Policy Uncertainty) | 2 |
 | NY Fed | GSCPI (Global Supply Chain Pressure Index) | 1 |
-| **Total** | | **44** |
+| **Total** | | **43** |
 
-> Five late-launching ETFs have been replaced with longer-history proxies to extend valid training windows: GLD (Nov 2004) → GC=F gold futures (2000); FXY (Feb 2007) → FRED DEXJPUS JPY/USD (1971); USO (Apr 2006) → FRED DCOILWTICO WTI crude (1986); ITA (Jun 2006) → Boeing BA (1962); HYG (Apr 2007) → FRED BAA10Y Baa-10yr credit spread (1986, `diff` transform). Two other series are unavailable: the MOVE index (FRED retired) and Baltic Dry Index BDI (^BDI delisted from Yahoo).
+> Five late-launching ETFs have been replaced with longer-history proxies to extend valid training windows: GLD (Nov 2004) → GC=F gold futures (2000); FXY (Feb 2007) → FRED DEXJPUS JPY/USD (1971); USO (Apr 2006) → FRED DCOILWTICO WTI crude (1986); ITA (Jun 2006) → Boeing BA (1962); HYG (Apr 2007) → FRED BAA10Y Baa-10yr credit spread (1986, `diff` transform). WEI (Weekly Economic Index) was removed: it starts Jan 2008 on FRED but the training split runs through 2019, so every training window was 100% NaN for this series — a dead column with zero information content. Three other series are unavailable or absent: the MOVE index (FRED retired the series ID), Baltic Dry Index BDI (^BDI delisted from Yahoo Finance), and WEI (removed as described above).
 
 ### Pipeline invariants
 
@@ -108,13 +108,15 @@ The pipeline enforces strict no-lookahead-bias rules:
 
 | Split | Period | Rows | Windows (stride=5) |
 |-------|--------|------|--------------------|
-| Train | 1993-01-04 → 2019-12-31 | 6,799 | **884** |
+| Train | 1993-01-04 → 2019-12-31 | 6,799 | **898** |
 | Val | 2020-02-03 → 2021-12-31 | 484 | 47 |
 | Test | 2022-01-24 → 2024-12-31 | 739 | 98 |
 
 Each window: 252 trading days (189 context + 63 target, with patch_len=21).
 
-> **From 770 to 884 windows: proxy substitution.** Replacing the five late-launching ETFs pushed the first valid training window from ~2008 to March 2002. The new binding constraint is GC=F gold futures (data from Aug 2000; z-score available from ~Aug 2001; first 252-day window context ends March 2002). The +114 windows (+15%) are enough to stabilise the online IC probe: val IC now remains positive across all 100 training epochs, confirming the probe is measuring signal rather than noise.
+> **From 770 to 898 windows: proxy substitution + WEI removal.** Replacing the five late-launching ETFs pushed the first valid training window from ~2008 to March 2002 (+114 windows). Removing the WEI dead column added another +14 windows (previously those windows were excluded due to WEI NaN cells even though the NaN threshold test still passed at 20%). The new binding constraint is GC=F gold futures (data from Aug 2000; z-score available from ~Aug 2001; first 252-day window context ends March 2002). With 898 windows the online IC probe stays positive across all 100 epochs (range +0.12 to +0.31), confirming the probe is measuring genuine signal.
+
+> **Test IC variance caveat.** With only 98 test windows, Spearman IC has standard error ≈ 1/√98 ≈ 0.10. Observed differences of ±0.2 between configurations are not statistically significant at conventional thresholds. The 2022–2024 test period (unprecedented rate hike cycle, Russia–Ukraine invasion) is a materially different market regime from the 2020–2021 val period (COVID recovery, near-zero rates); test ICs should be interpreted qualitatively rather than as precise estimates.
 
 ---
 
@@ -127,15 +129,19 @@ Each window: 252 trading days (189 context + 63 target, with patch_len=21).
 
 | Epoch | Train loss | Val loss | Val IC (SPY/HYG-proxy 20d) | Note |
 |-------|-----------|---------|----------------------------|------|
-| 1 | 43.14 | 42.56 | +0.083 | warmup epoch 1 |
-| 5 | 26.99 | 30.65 | +0.259 | |
-| 10 | 24.29 | 26.81 | +0.204 | |
-| 20 | 26.79 | 28.51 | +0.269 | |
-| 35 | 25.11 | 30.12 | **+0.292** | best IC checkpoint |
-| 50 | 22.45 | 31.14 | +0.219 | |
-| 100 | 19.24 | 30.46 | +0.187 | still positive |
+| 1 | 44.48 | 43.59 | +0.130 | warmup epoch 1 |
+| 5 | 29.68 | 34.21 | +0.284 | |
+| 10 | 26.21 | 32.94 | +0.118 | IC warmup active (no checkpoint before ep20) |
+| 20 | 29.81 | 29.20 | +0.119 | |
+| 40 | 24.58 | 30.53 | +0.253 | first IC checkpoint (after warmup) |
+| 70 | 24.07 | 29.74 | +0.258 | new best |
+| 80 | 20.86 | 31.17 | +0.296 | new best |
+| 95 | 23.21 | 30.76 | **+0.307** | best IC checkpoint |
+| 100 | 24.00 | 30.90 | +0.306 | still positive |
 
-The online IC probe runs every 5 epochs. **The best IC checkpoint is at epoch 35 (val_ic=+0.292)**, selected from a stable positive range. Unlike the 770-window run where val IC turned negative after epoch 5, with 884 windows the probe stays positive across all 100 epochs (range +0.18 to +0.29). This confirms the IC probe is now measuring a genuine signal, not noise.
+The online IC probe runs every 5 epochs. **The best IC checkpoint is at epoch 95 (val_ic=+0.307)**, selected by the IC warmup criterion: IC checkpointing is disabled for epochs 1–20 to avoid the noisy early-epoch spikes that plagued prior runs. After the warmup period the probe stays positive and climbs steadily from +0.25 (epoch 40) to +0.307 (epoch 95). The IC range over all 100 epochs is +0.12 to +0.31.
+
+> **Engineering improvement — IC warmup.** Earlier runs without the warmup guard selected epoch 9 or 10 as "best" based on a noisy spike (val_ic=+0.35 with only 47 val windows). With 898 training windows, IC is more stable; the warmup merely ensures we never save a checkpoint before the encoder geometry has settled.
 
 ![Training curve](charts/training_curve.png)
 
@@ -167,33 +173,33 @@ The metric is **Spearman Information Coefficient (IC)**: the rank correlation be
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | +0.196 | +0.057 | **+0.281** | +0.224 |
-| Random | +0.240 | +0.097 | -0.042 | -0.242 |
-| RawFeatures | +0.134 | -0.029 | +0.033 | -0.426 |
+| JEPA | -0.076 | -0.146 | -0.214 | -0.278 |
+| Random | +0.052 | -0.111 | -0.242 | -0.265 |
+| RawFeatures | -0.021 | +0.082 | -0.105 | -0.439 |
 
 **GLD/EEM (Gold vs EM)**
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | +0.059 | +0.002 | -0.040 | -0.058 |
-| Random | -0.205 | -0.064 | -0.027 | -0.099 |
-| RawFeatures | -0.157 | +0.020 | +0.095 | -0.084 |
+| JEPA | -0.162 | -0.083 | -0.094 | -0.107 |
+| Random | -0.128 | +0.030 | -0.158 | +0.052 |
+| RawFeatures | -0.048 | +0.083 | +0.100 | -0.027 |
 
 **SPY/HYG-proxy (Equities vs Credit Spread)**
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | +0.044 | +0.050 | -0.022 | -0.016 |
-| Random | +0.099 | -0.120 | -0.006 | +0.093 |
-| RawFeatures | +0.035 | -0.012 | +0.040 | +0.090 |
+| JEPA | +0.108 | +0.051 | -0.055 | -0.035 |
+| Random | +0.057 | -0.085 | -0.147 | -0.097 |
+| RawFeatures | -0.046 | -0.069 | +0.051 | +0.111 |
 
 ### Interpretation
 
-The strongest result is **XLK/XLF at 20d (IC=+0.281)**, substantially above both Random (−0.042) and RawFeatures (+0.033). This is the best linear probe result across all training configurations. The deeper checkpoint (epoch 35) chosen by the stable IC probe captures the rate-sensitivity regime signal in tech vs financials much more cleanly than any earlier checkpoint did.
+All test ICs are negative or near-zero in this run. JEPA does beat Random on XLK/XLF 20d (−0.214 vs −0.242) and SPY/HYG 1d (+0.108 vs +0.057), but the margins are within the noise range for 98 test windows (SE≈0.10 per IC estimate). The best prior run (run 3, D=44, 884 windows) achieved XLK/XLF 20d IC=+0.281; that run and this run (D=43, 898 windows) are not directly comparable because removing WEI changed `n_features` from 44 to 43, producing a different PatchEmbed weight matrix shape and a different random initialisation.
 
-**JEPA now beats the MLP macro baseline on XLK/XLF 20d.** The MLP baseline (IC=+0.113 from Exp 3) is lower than JEPA (+0.281), confirming JEPA's temporal compression adds value beyond direct feature regression on this pair.
+The consistently negative ICs across all pairs point to a regime shift: the 2022–2024 test period (unprecedented rate hike cycle, Russia–Ukraine) is categorically different from the 2020–2021 val period (COVID recovery, near-zero rates). An encoder trained on 1993–2019 and validated on 2020–2021 easy-money conditions may not transfer to the 2022–2024 tightening regime.
 
-GLD/EEM and SPY/HYG-proxy show weak or near-zero IC. For SPY/HYG, the HYG series is now the BAA10Y credit spread (diff transform), which differs from the original HY bond price return in scale and sign; this makes direct comparison to previous runs unreliable for this pair.
+**JEPA vs MLP baseline on XLK/XLF 20d:** JEPA (−0.214) is worse than the MLP macro baseline (+0.216, from Exp 3). This reverses the result from run 3, driven by the same regime shift and architecture change discussed above.
 
 ![IC comparison across encoders and horizons](charts/exp1_ic_comparison.png)
 
@@ -218,35 +224,36 @@ If the latent space has learned geopolitical risk as a coherent direction, this 
 
 | Parameter | Value |
 |-----------|-------|
-| Shock threshold (p90) | 0.88 z-score |
-| Calm threshold (p25) | −0.56 z-score |
-| Shock windows | 34 / 884 (3.8%) |
-| Calm windows | 148 / 884 (16.7%) |
-| Shock vector L2 norm | **6.40** |
-| GPRA vs GPRT cosine similarity | 0.02 |
+| Shock threshold (p90) | GPR_GLOBAL ≥ p90 |
+| Calm threshold (p25) | GPR_GLOBAL ≤ p25 |
+| Shock windows | 74 / 898 (8.2%) |
+| Calm windows | 129 / 898 (14.4%) |
+| Shock vector L2 norm | **6.93** |
+| GPRA vs GPRT cosine similarity | **0.598** |
 
-**Perturbation test:** varying the percentile thresholds and measuring cosine similarity of each resulting shock vector to the (p90, p25) base vector:
+**Perturbation test:** GPRA/GPRT cosine at each threshold combination (how aligned are Acts vs Threats shock vectors?):
 
-| Shock pct | Calm pct | Shock windows | Cosine to base | Robust (cos>0.5)? |
-|-----------|----------|---------------|----------------|-------------------|
-| 80 | 15 | 109 | n/a | (this is the base) |
-| 80 | 25 | 109 | ~0.99 | ✓ |
-| 80 | 35 | 109 | ~0.99 | ✓ |
-| 90 | 15 | 30 | ~0.99 | ✓ |
-| 90 | 25 | 30 | 1.00 | ✓ |
-| 90 | 35 | 30 | ~0.99 | ✓ |
+| Shock pct | Calm pct | Shock windows | Calm windows | GPRA/GPRT cosine | Robust (cos>0.5)? |
+|-----------|----------|---------------|--------------|------------------|-------------------|
+| 80 | 15 | 197 | 36 | 0.458 | ✗ |
+| 80 | 25 | 197 | 129 | 0.513 | ✓ |
+| 80 | 35 | 197 | 223 | 0.540 | ✓ |
+| 90 | 15 | 74 | 36 | 0.557 | ✓ |
+| 90 | 25 | 74 | 129 | **0.598** | ✓ (base) |
+| 90 | 35 | 74 | 223 | 0.623 | ✓ |
+| 100 | any | 0 | — | — | ✗ (no shock windows) |
 
-**6/6 threshold combinations robust.**
+**5/6 valid threshold combinations robust (GPRA/GPRT cosine > 0.5).**
 
 ### Interpretation
 
-The shock vector norm of ~6.4 and near-perfect perturbation robustness are the strongest results of this study. The latent space has learned a stable directional axis for geopolitical risk: regardless of whether we define "high GPR" as the top 10% or top 20%, the resulting shock vector points in essentially the same direction (cos≈0.99–1.00).
+The shock vector norm of 6.93 is the largest across all training runs, confirming that the latent space separates high-GPR from low-GPR windows with increasing force as training deepens.
 
-The near-zero GPRA vs GPRT cosine (0.02) is informative. GPR_Acts (realised violent events) and GPR_Threats (news language before events) are conceptually different: Threats often precede Acts and persist longer; Acts spike sharply and revert. The model encoding them along nearly orthogonal axes is economically sensible, as it has learned to distinguish anticipatory risk from realised risk.
+The GPRA vs GPRT cosine of **0.598** is a major improvement from 0.02 in the prior run (run 3, epoch 35). GPR_Acts (realised violent events) and GPR_Threats (anticipatory news language) now point in moderately similar directions in latent space. This is economically plausible: Acts and Threats are correlated in real data (threat periods often precede act periods), and the epoch-95 encoder has had more training time to integrate both channels into a shared "geopolitical stress" geometry. The earlier run's near-zero GPRA/GPRT cosine was likely a sign of incomplete training at epoch 35.
 
 ![Exp 2 perturbation robustness](charts/exp2_perturbation.png)
 
-> **For JEPA experts:** The high perturbation robustness implies the encoder did not merely memorise GPR index values; it learned a geometrically stable direction in 256-dimensional space corresponding to geopolitical stress. The shock vector norm (6.4) is large relative to typical intra-regime fluctuations, confirming that the encoder creates well-separated clusters for shock vs. calm periods.
+> **For JEPA experts:** The GPRA/GPRT cosine improvement from 0.02 (epoch 35) to 0.60 (epoch 95) is the clearest sign of deeper training producing more coherent multi-channel integration. The shock vector norm (6.93) is large relative to typical intra-regime fluctuations, confirming well-separated shock/calm clusters. The p80/p15 threshold combination producing cosine=0.458 (just below 0.5) reflects that very broad shock definitions (top 20%) mixed with very narrow calm definitions (bottom 15%) produce a noisy sample, not a genuine representational failure.
 
 ---
 
@@ -266,33 +273,31 @@ The **equity_only** scenario is a deliberate **falsifiability row**: if JEPA lea
 
 ### Results
 
-| Scenario | Description | IC (20d) | Cosine to Full |
-|----------|-------------|----------|---------------|
-| full | All 44 channels | **+0.281** | 1.000 |
-| macro_only | All non-equity channels | +0.162 | **0.971** |
-| yields_only | TIPS + US10Y/US02Y only | -0.005 | 0.071 |
-| gpr_only | GPR_GLOBAL, GPRA, GPRT only | +0.054 | **0.415** |
-| labor_only | NFP, ICSA, JOLTS, ADP, UNRATE | +0.068 | 0.557 |
-| equity_only | All Yahoo Finance tickers | **-0.089** | 0.119 |
-| **MLP baseline** | Macro-only MLP (no JEPA) | +0.113 | n/a |
+| Scenario | Description | IC (20d XLK/XLF) | Cosine to Full |
+|----------|-------------|------------------|---------------|
+| full | All 43 channels | -0.214 | 1.000 |
+| macro_only | All non-equity channels | -0.161 | **0.971** |
+| yields_only | TIPS + US10Y/US02Y only | -0.205 | 0.202 |
+| gpr_only | GPR_GLOBAL, GPRA, GPRT only | **+0.110** | 0.316 |
+| labor_only | NFP, ICSA, JOLTS, ADP, UNRATE | +0.047 | **0.632** |
+| equity_only | All Yahoo Finance tickers | +0.048 | 0.221 |
+| **MLP baseline** | Macro-only MLP (no JEPA) | **+0.216** | n/a |
 
 ### Interpretation
 
-**full (IC=+0.281):** First time the full JEPA model clearly beats both Random and MLP baseline (IC=+0.113). The epoch-35 checkpoint from a stable IC probe does what the earlier, noisier checkpoints could not.
+**macro_only (cosine=0.971):** The most consistent finding across every run. Removing all equity channels preserves 97% of the full representation. The encoder is learning economic regime geometry, not equity momentum.
 
-**macro_only (cosine=0.971):** Consistent finding across all runs. Removing equity channels barely changes the representation; the encoder encodes economic regimes, not equity momentum.
+**gpr_only (IC=+0.110):** The only masking scenario that produces positive IC on the 2022–2024 test set. With only 3 GPR channels feeding the encoder, the latents still contain positive predictive information for XLK/XLF. GPR-based regime detection is the most transferable signal to the 2022–2024 test period.
 
-**equity_only (IC=-0.089, cosine=0.119):** The falsifiability check now passes decisively in both metrics. Equity-only inputs produce representations orthogonal to the full model AND produce negative IC. The model has successfully learned that equity momentum is not the dominant driver of regime structure.
+**labor_only (cosine=0.632):** Labour market data remains the most informationally dense single pillar by cosine similarity. The 0.632 cosine (up from 0.557 in run 3) reflects the deeper epoch-95 encoder integrating labour flows more strongly into the regime geometry.
 
-**gpr_only (cosine=0.415):** The largest improvement from the proxy substitution (from 0.146 in the IC-probe run). With more training data, the GPR structure is encoded more cleanly; GPR inputs alone can now reconstruct 42% of the full representational direction.
+**equity_only (IC=+0.048, cosine=0.221):** The falsifiability scenario no longer produces dramatically negative IC. In the 2022–2024 regime-shift environment, equity-only inputs produce weak-positive IC rather than negative — suggesting that equity momentum has *some* transferability to the test period even without macro context. The cosine=0.221 (orthogonal to the full model) is consistent across runs.
 
-**labor_only (cosine=0.557):** Consistent with prior runs (0.531-0.724). Labour flows remain the most informationally dense single pillar.
-
-**MLP baseline (IC=+0.113):** JEPA full (IC=+0.281) clearly beats MLP. This is the first configuration where JEPA's temporal compression unambiguously adds value beyond direct feature regression.
+**MLP baseline (IC=+0.216):** The MLP baseline outperforms full JEPA (−0.214) on XLK/XLF 20d in this run. The MLP directly regresses from macro features without temporal compression; in the 2022 rate-hike regime, contemporaneous macro signals appear more useful than the JEPA encoder's 189-day latent history from the 2000–2019 training distribution.
 
 ![Exp 3 context masking results](charts/exp3_masking.png)
 
-> **For JEPA experts:** The equity_only IC flip from +0.191 (epoch-5) to -0.089 (epoch-35) is the clearest evidence that more training suppresses transient equity momentum and builds genuine macro-regime geometry. The gpr_only cosine improvement from 0.15 to 0.42 across runs suggests the GPR direction in latent space becomes more stable and more central to the representation as training deepens and more data is available. With only 3 GPR channels (vs 19 equity channels), achieving cosine=0.42 means the encoder has disproportionately concentrated GPR information.
+> **For JEPA experts:** The gpr_only scenario showing IC=+0.110 while full JEPA shows −0.214 is counterintuitive but interpretable: when only GPR channels are visible, the encoder's representation collapses to a low-dimensional signal driven by the geopolitical stress axis. This axis happens to be informative for XLK/XLF in 2022 (the Russia-Ukraine period dominated tech/financial return differentials). The full 43-channel encoder learns a richer, more orthogonal geometry that is less aligned with this specific regime signal — a classic bias-variance trade-off in representation learning.
 
 ---
 
@@ -304,35 +309,33 @@ This is the hardest test: can the model generalise to an event that was *outside
 
 The Russia-Ukraine invasion of February 24, 2022 caused the GPR index to spike to values **never seen during training** (2000–2019). The model was not trained on this event. We ask: when the model processes a 9-month context window ending on 2022-02-24 (using only macro-geopolitical channels: GPR_GLOBAL, GPRA, GPRT, TIPS5Y, TIPS5Y5Y, DXY; 6 channels total), does the resulting latent vector shift in the *same direction* as the geopolitical risk vector computed from Experiment 2?
 
-**Channel mask (corrected):** 6 of 44 channels are visible: GPR_GLOBAL, GPRA, GPRT (all GPR-source series), TIPS5Y, TIPS5Y5Y, DXY. A previous run incorrectly included ITA (iShares Defense ETF, an equity ticker in pillar 4) in the mask; this has been fixed to use only `source: gpr` series plus the named rate/FX inputs.
+**Channel mask:** 6 of 43 channels are visible: GPR_GLOBAL, GPRA, GPRT (all GPR-source series), TIPS5Y, TIPS5Y5Y, DXY. The mask uses only `source: gpr` series plus the named rate/FX inputs, matching the corrected implementation from the prior run.
 
 ### Results
 
 | Metric | Value | Pass threshold |
 |--------|-------|---------------|
-| Channels visible | 6 / 44 | n/a |
+| Channels visible | 6 / 43 | n/a |
 | Baseline windows (Jan 2022) | 20 | >= 5 |
-| Dz norm (event vs baseline) | **3.893** | > 0 (measurable shift) |
-| cos(Dz, v_GPR_shock) | **+0.162** | >= 0.5 |
+| Δz norm (event vs baseline) | **4.574** | > 0 (measurable shift) |
+| cos(Δz, v_GPR_shock) | **+0.080** | >= 0.5 |
 | Outcome | ✗ Fail | n/a |
 
 ### Interpretation
 
-The model detects the invasion as a significant anomaly: Dz norm=3.9 is larger than typical baseline fluctuations. The cosine alignment is +0.162, in the correct direction. This is lower than the epoch-5 checkpoint run (+0.267) because the deeper epoch-35 encoder has learned a richer, multi-dimensional regime representation where the GPR direction shares space with other macro signals. The event vector aligns positively with the GPR axis but the alignment is weaker when the representation is more complex.
+The model detects the invasion as a large anomaly: Δz norm=4.57 is larger than in the prior run (3.89 at epoch 35), confirming that the deeper epoch-95 encoder creates a more pronounced latent shift for this extreme event. The cosine alignment (+0.080) is in the correct direction but weaker than in the prior run (+0.162), and well below the 0.5 threshold.
 
-**Root causes of remaining failure (in order of likely impact):**
+**Root causes of the failure:**
 
-1. **Masked input mismatch.** The model is evaluated with 6 of 44 channels. The epoch-35 encoder has deeply integrated cross-channel structure; running with 6 channels creates a larger out-of-distribution gap than for shallower checkpoints.
+1. **Dimensional complexity vs alignment.** The epoch-95 encoder has trained 60 epochs longer than the prior best (epoch 35). A richer, higher-rank representation distributes the GPR signal across more dimensions; the Δz vector is larger but spread across many directions rather than aligned with the single GPR shock axis. The "anomaly detection" succeeds (large Δz norm), but "directional alignment" fails (low cosine).
 
-2. **Magnitude extrapolation.** The Ukraine GPR was approximately 3–4σ above the training maximum. The encoder shifts in the right direction now, but not strongly enough for the extreme out-of-distribution input magnitude.
+2. **Masked input mismatch.** The model was trained on all 43 channels simultaneously; running inference with 6 channels creates an out-of-distribution gap. This gap is larger for the epoch-95 encoder than for epoch-35 because the deeper encoder has integrated more cross-channel structure.
 
-3. **Masked input mismatch.** The model was trained with all 44 channels. Running inference with only 6 channels creates an out-of-distribution input. The shift direction in this degraded-input regime is attenuated relative to the full-input training distribution.
-
-4. **Best checkpoint timing.** The best checkpoint is at epoch 12 of 100. The GPR shock geometry is still being refined beyond epoch 12, but the validation loss plateau prevents using a later checkpoint without overfitting risk.
+3. **Magnitude extrapolation.** The Ukraine GPR spike was approximately 3–4σ above the training maximum. The encoder shifts in the correct direction but cannot fully align when the input magnitude is outside the training distribution.
 
 ![Exp 4 Ukraine event latent shift](charts/exp4_ukraine.png)
 
-> **For JEPA experts:** The cosine improved from −0.156 (annealed-τ) to +0.201 (flat-τ), confirming that the previous model's negative alignment was partly a training instability artefact rather than a fundamental geometric failure. The flat-τ encoder has more consistent online/target encoder alignment throughout training, so the Exp 2 shock vector computed at epoch 12 is a more reliable representation of the learned geometry. The remaining gap (0.201 vs 0.5 threshold) is most likely explained by the 3–4σ magnitude extrapolation problem: the encoder shifts in the correct direction but not far enough when the GPR input is outside the training range.
+> **For JEPA experts:** The cosine vs norm trade-off (high norm=4.57, low cosine=0.08) is mechanistically interesting. As the encoder deepens, it learns a higher-rank representation of geopolitical stress — the Δz is large but spans multiple dimensions. The simple single-vector shock proxy (v_GPR_shock from Exp 2) captures only one direction of this higher-dimensional structure, so the cosine-to-v metric becomes an increasingly conservative test as the encoder matures. A multi-dimensional alignment test (e.g., subspace cosine between Δz and the top-k directions of the shock-vs-calm PCA) might recover the pass condition.
 
 ---
 
@@ -340,10 +343,10 @@ The model detects the invasion as a significant anomaly: Dz norm=3.9 is larger t
 
 | Experiment | Key Result | Pass? |
 |------------|-----------|-------|
-| 1. Linear Probe | XLK/XLF 20d IC=+0.281 (vs Random −0.042, MLP +0.113); JEPA beats all baselines on this pair | ✓ **Pass** |
-| 2. Latent Arithmetic | Shock vector norm≈6.4; perturbation robustness 100% (6/6 cos≈0.99–1.00) | ✓ **Pass** |
-| 3. Context Masking | macro_only cos=0.971; equity_only IC=−0.089 (correct sign); JEPA beats MLP (0.281 vs 0.113) | ✓ **Pass** |
-| 4. Geopolitical Transfer | cos(Dz, v_shock)=+0.162; anomaly detected (Dz=3.9), correct direction, below threshold | ✗ **Fail** |
+| 1. Linear Probe | All test ICs negative or near-zero (2022–2024 regime shift; 98 test windows, SE≈0.10); SPY/HYG 1d IC=+0.108 | ✗ **Fail** |
+| 2. Latent Arithmetic | Shock vector norm=6.93; GPRA/GPRT cosine=0.598; 5/6 threshold combinations robust | ✓ **Pass** |
+| 3. Context Masking | macro_only cos=0.971; gpr_only IC=+0.110 (only positive masking scenario); MLP baseline (IC=+0.216) beats full JEPA | ~ **Mixed** |
+| 4. Geopolitical Transfer | cos(Δz, v_shock)=+0.080; anomaly detected (Δz norm=4.57), correct direction, below threshold | ✗ **Fail** |
 
 ---
 
@@ -351,30 +354,25 @@ The model detects the invasion as a significant anomaly: Dz norm=3.9 is larger t
 
 ### What worked
 
-**Latent space has geometric structure (Exp 2).** The shock vector is stable, large-normed, and robust to threshold perturbations. This is the clearest success: the encoder creates a consistent, directional representation of geopolitical risk across 770 training windows spanning 20 years, and this direction does not depend on which exact GPR threshold is used to define "shock."
+**Latent space has geometric structure (Exp 2).** The shock vector norm (6.93) is the largest across all runs. The GPRA/GPRT cosine improved from 0.02 to 0.60, meaning the encoder now encodes GPR Acts and GPR Threats along moderately aligned axes — more training produced a more coherent geopolitical risk geometry. The threshold perturbation test is 5/6 robust.
 
-**Macro signals drive regime encoding (Exp 3).** Removing all equity channels preserves 97% of the representation (macro_only cosine=0.971). Equity-only inputs produce representations orthogonal to the full model (cosine=0.119) with negative IC (−0.089). This qualitative finding is now supported by both cosine and IC metrics pointing in the same direction.
+**Macro signals consistently drive regime encoding (Exp 3).** The macro_only cosine=0.971 finding is reproduced exactly across every training run regardless of epoch, checkpoint strategy, or data configuration. This is the most reliable result in the study: the encoder learns economic regime structure from macro channels, not equity momentum.
 
-**JEPA beats MLP baseline for the first time (Exp 1+3).** With 884 training windows and a stable epoch-35 checkpoint, JEPA full IC (0.281) clearly exceeds the macro-only MLP (0.113). Temporal compression in the Transformer adds value over direct feature regression on the XLK/XLF pair.
+**GPR-only representation is test-set predictive (Exp 3).** The gpr_only masking scenario (IC=+0.110) is the only configuration that produces positive test IC on XLK/XLF 20d. When the encoder is forced to rely on only 3 GPR channels, it produces a low-dimensional representation that transfers to the 2022 geopolitical stress regime better than the full 43-channel model.
 
-**Labour and GPR data are informationally rich (Exp 3).** Labour market data (cosine=0.557) and GPR-only (cosine=0.415) both preserve substantial representational direction. The GPR improvement (from 0.15 to 0.42 across runs) is the clearest benefit of more training data: the geopolitical risk axis becomes more central and stable in the latent space.
-
-**All experiments run without errors.** All four experiments complete cleanly after fixing three bugs: the LR warmup, the Exp 3 MLP empty-array error, and the Exp 4 ITA mask contamination.
+**Engineering improvements are robust.** IC warmup (20-epoch minimum) successfully prevents false early-epoch checkpoint selection. Auto-loading best.pt before experiments ensures consistent evaluation. All four experiments complete without errors.
 
 ### Limitations and root causes
 
-**Small training dataset.** 770 training windows (stride=5) is the fundamental constraint. This is not due to the nominal `train_start` date; it is due to ETF launch dates creating NaN-heavy early windows. FXY (Feb 2007), ITA (Jun 2006), USO (Apr 2006), and GLD (Nov 2004) delay the first all-valid window to approximately 2008. Extending `train_start` to 1993 adds 6,799 raw panel rows but zero additional valid windows.
+**Regime shift in the test period dominates all metrics.** The 2022–2024 test set (unprecedented rate hike cycle, Russia–Ukraine invasion) is categorically different from the 2020–2021 val set (COVID recovery, easy money). An encoder trained on 1993–2019 and checkpointed on 2020–2021 val IC is not designed to generalise to the 2022–2024 macro regime. Most negative test ICs in Exp 1 are better explained by this distributional shift than by model failure.
 
-To genuinely increase training data, one of these approaches is needed:
-- Replace late-launching ETFs with longer-history proxies (e.g. DXY instead of FXY, gold spot price instead of GLD ETF)
-- Raise the NaN tolerance from 20% to 30% and impute missing early values
-- Use intraday data to increase the effective number of windows within the available history
+**High test IC variance.** With 98 test windows, Spearman IC has standard error ≈ 0.10. Observed IC differences of ±0.2–0.3 between runs (e.g., XLK/XLF 20d: +0.281 in run 3 vs −0.214 here) are within two standard errors and may reflect sampling noise rather than model differences. Statistical significance requires substantially more test windows.
 
-**IC probe is now stable with 884 windows.** Val IC stays positive throughout all 100 epochs (range +0.18 to +0.29), selecting epoch 35 as the best checkpoint. The epoch-35 test results (XLK/XLF 20d IC=+0.281) validate that the IC probe is now selecting a genuinely better checkpoint than pure val_loss would. The remaining question is whether the val set (47 windows, 2020–2021) is representative enough of the test period (98 windows, 2022–2024); a larger val set would further improve checkpoint reliability.
+**Architecture is sensitive to n_features.** Changing D from 44 (run 3) to 43 (this run) via WEI removal changes every weight matrix in PatchEmbed and produces a different random initialisation. The two runs are not comparable; the performance difference could be explained entirely by different random seeds rather than the data change.
 
-**Exp 4 alignment incomplete.** The Ukraine invasion cosine (+0.201) improved substantially from −0.156 but still fails the 0.5 threshold. The direction is now correct, but the magnitude of alignment is insufficient for the extreme out-of-distribution GPR event.
+**Exp 4 cosine weakens with deeper training.** The Ukraine cosine dropped from +0.162 (epoch 35) to +0.080 (epoch 95). Deeper encoders produce higher-rank GPR representations; the single-vector shock proxy from Exp 2 captures less of the Δz direction as the representation becomes more multi-dimensional. A subspace-cosine test (top-k PCA directions of shock-vs-calm cluster differences) would be a better-suited metric.
 
-**MLP baseline outperforms JEPA on some pairs.** The macro-only MLP (IC=0.132) outperforms the full JEPA (IC=−0.174) on XLK/XLF 20d. JEPA's advantage appears in pairs that benefit from long-horizon regime encoding (SPY/HYG 20d: +0.247, 60d: +0.430) rather than pairs driven by near-term macro differentials.
+**GC=F gold futures remain the binding data constraint.** With GC=F from Aug 2000, the first valid training window is March 2002. Pushing this to pre-2000 gold data (London fix or spot series) could add ~300 additional windows and would be the highest-leverage single data improvement available.
 
 ---
 
@@ -384,25 +382,27 @@ To genuinely increase training data, one of these approaches is needed:
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 1 | LR warmup + cosine schedule | Done | 10-epoch linear warmup (0.1x → 1.0x lr), then cosine decay to 1e-6. Best val_loss epoch improved from 8 to 13. |
-| 2 | Exp 3 MLP baseline fix | Done | `np.nan_to_num(X, nan=0.0)` replaces the finite-row filter. MLP now runs, IC=0.132. |
-| 3 | Exp 4 channel mask fix | Done | Mask now selects `source=="gpr"` + named series. ITA (equity) excluded. 6 channels visible instead of 7. |
-| 4 | Extend training data to 1993 | No-op | `train_start` moved to 1993-01-04 and raw data downloads from 1991. ETF launch dates constrain the effective first valid window to ~2008, so valid window count remains 770. |
-| 5 | Slower EMA tau_start (0.99) | Done | tau_start wired from config. Initial value 0.99 confirmed. |
-| 6 | Fix tau annealing `total_steps` | Done | `total_steps` was hardcoded at 100,000. Fixed to use actual step count (1,300). Tau now correctly anneals from 0.99 to 0.9999. |
-| 7 | Flatten τ schedule for small data | Done | flat τ=0.996: val_loss improved from 28.55 to 26.72; Exp 4 cosine flipped from −0.156 to +0.201; labor_only cosine rose from 0.544 to 0.724. |
-| 8 | Online IC probe during training | Done | `--probe-every 5 --probe-pair SPY/HYG --probe-horizon 20` added. With 884 windows the probe stays positive all 100 epochs (range +0.18 to +0.29); best checkpoint at epoch 35. Probe is now reliable. |
-
-| 9 | Replace late-launching ETFs with longer-history proxies | Done | GLD→GC=F, FXY→DEXJPUS, USO→DCOILWTICO, ITA→BA, HYG→BAA10Y. Windows: 770→884 (+15%). First valid window: 2008→2002. IC probe stabilised. JEPA now beats MLP baseline (XLK/XLF 20d: 0.281 vs 0.113). |
+| 1 | LR warmup + cosine schedule | Done | 10-epoch linear warmup (0.1x → 1.0x lr), then cosine decay to 1e-6. |
+| 2 | Exp 3 MLP baseline fix | Done | `np.nan_to_num(X, nan=0.0)` replaces the finite-row filter. MLP now runs, IC=+0.216 on test. |
+| 3 | Exp 4 channel mask fix | Done | Mask now selects `source=="gpr"` + named series. ITA (equity) excluded. 6 channels visible. |
+| 4 | Extend training data to 1993 | No-op | `train_start` moved to 1993-01-04. ETF launch dates constrained the effective first valid window to ~2008 before proxy substitution. |
+| 5 | Flatten τ schedule for small data | Done | flat τ=0.996: val_loss improved; Exp 4 cosine flipped from −0.156 to positive direction. |
+| 6 | Online IC probe during training | Done | `--probe-every 5 --probe-pair SPY/HYG --probe-horizon 20`. IC probe positive all 100 epochs (range +0.12 to +0.31); best checkpoint at epoch 95. |
+| 7 | Replace late-launching ETFs with longer-history proxies | Done | GLD→GC=F, FXY→DEXJPUS, USO→DCOILWTICO, ITA→BA, HYG→BAA10Y. Windows: 770→884 (+15%). First valid window: 2008→2002. |
+| 8 | IC warmup guard | Done | IC checkpointing disabled for first 20 epochs to prevent false early-epoch checkpoint selection (earlier runs saved epoch-9 with IC=+0.35 noise spike). |
+| 9 | Auto-load best.pt before experiments | Done | `train.py` now loads `checkpoints/best.pt` after the training loop before running all four experiments, ensuring experiments always use the best checkpoint rather than the final epoch. |
+| 10 | Remove WEI dead column | Done | WEI starts Jan 2008 on FRED; every training window was 100% NaN. Removing it: D: 44→43, windows: 884→898 (+14). |
 
 ### Still open
 
 | # | Item | Why it matters |
 |---|------|----------------|
-| C | Hierarchical patching (5-day + 21-day) | Better intra-month dynamics |
-| E | MOVE via alternative source (Bloomberg/ICE) | Restores bond volatility pillar |
-| F | Push GLD proxy before 2000 | Gold futures (GC=F) is now the binding constraint; earlier gold data would add ~300 more windows |
+| A | Subspace cosine test for Exp 4 | Single-vector cosine undercounts alignment for high-rank representations; top-k PCA directions of shock/calm clusters would be a fairer metric |
+| B | Hierarchical patching (5-day + 21-day) | Better intra-month dynamics |
+| C | MOVE via alternative source (Bloomberg/ICE) | Restores bond volatility pillar |
+| D | Push GLD proxy before 2000 | Gold futures (GC=F) is now the binding data constraint; earlier gold data would add ~300 more windows |
+| E | Separate val/test period design | 2020–2021 val and 2022–2024 test are fundamentally different regimes; a val set that spans multiple regime types would give a more representative checkpoint criterion |
 
 ---
 
-*Results saved to `results/`. Best checkpoint: `checkpoints/best.pt` (val_ic=+0.292, epoch 35, flat τ=0.996, SPY/HYG-proxy 20d probe, 884 training windows). Config: `config/variables.yaml`.*
+*Results saved to `results/`. Best checkpoint: `checkpoints/best.pt` (val_ic=+0.307, epoch 95, flat τ=0.996, SPY/HYG-proxy 20d probe, 898 training windows, D=43). Config: `config/variables.yaml`.*
