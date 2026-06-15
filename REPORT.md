@@ -137,6 +137,8 @@ Each window: 252 trading days (189 context + 63 target, with patch_len=21).
 
 The model reaches its best validation loss (28.55) at epoch ~13 and then diverges as training loss continues to decrease. This is classic overfitting with 770 training windows and 47 validation windows. The best checkpoint is used for all experiments.
 
+![Training curve](charts/training_curve.png)
+
 > **Note for JEPA experts:** The training/validation gap after epoch 13 is primarily a function of dataset size (770 windows at stride=5 is modest for an 11M-parameter model). As τ anneals toward 0.9999, the EMA target encoder becomes very conservative, creating increasingly stable but potentially stale targets. With small data, this causes the online encoder to overfit to the gap between itself and the slowly-evolving target, widening the train/val split. A constant τ≈0.99 (faster target updates) produced a flatter val_loss curve in earlier runs, suggesting the optimal τ schedule for this dataset size is flatter than the cosine plan designed for large datasets.
 
 ---
@@ -195,6 +197,8 @@ At short horizons (1d, 5d), raw features often match or exceed JEPA, which is ex
 
 The XLK/XLF pair shows negative IC at all JEPA horizons. Given the 2022–2024 test period (tech selloff, rate hike cycle, subsequent AI-driven tech rebound), this pair may be too regime-specific for linear probing on 98 test windows to produce stable estimates.
 
+![IC comparison across encoders and horizons](charts/exp1_ic_comparison.png)
+
 ---
 
 ## 6. Experiment 2: Latent Arithmetic (The Geopolitical Risk Vector)
@@ -242,6 +246,8 @@ The shock vector norm of ~6.4 and near-perfect perturbation robustness are the s
 
 The near-zero GPRA vs GPRT cosine (0.02) is informative. GPR_Acts (realised violent events) and GPR_Threats (news language before events) are conceptually different: Threats often precede Acts and persist longer; Acts spike sharply and revert. The model encoding them along nearly orthogonal axes is economically sensible, as it has learned to distinguish anticipatory risk from realised risk.
 
+![Exp 2 perturbation robustness](charts/exp2_perturbation.png)
+
 > **For JEPA experts:** The high perturbation robustness implies the encoder did not merely memorise GPR index values; it learned a geometrically stable direction in 256-dimensional space corresponding to geopolitical stress. The shock vector norm (6.4) is large relative to typical intra-regime fluctuations, confirming that the encoder creates well-separated clusters for shock vs. calm periods.
 
 ---
@@ -282,6 +288,8 @@ The **equity_only** scenario is a deliberate **falsifiability row**: if JEPA lea
 
 **MLP baseline (IC=+0.132):** The macro-only MLP outperforms JEPA's full latent (IC=-0.108) on this specific pair and horizon. Two interpretations: (1) the direct feature-to-return mapping in macro series is strong enough that a simple MLP captures it without temporal compression; (2) JEPA's IC is negative here due to test-period idiosyncrasies in the 2022–2024 rate cycle. The MLP result is a useful sanity check rather than an indictment of JEPA. It shows macro information is genuinely predictive of this pair, while JEPA may be encoding it in a different, regime-based space.
 
+![Exp 3 context masking results](charts/exp3_masking.png)
+
 > **For JEPA experts:** The macro_only cosine of 0.940 deserves attention. The VICReg covariance term decorrelates embedding dimensions; if equity channels are highly correlated with macro channels at monthly frequencies (which they are), the encoder may represent their common factor primarily through macro channels and use equity channels for fine-grained within-regime structure. This would explain both the high macro_only cosine and the low yields_only / gpr_only cosines, since individual pillars lack the breadth to reconstruct the multi-factor regime representation.
 
 ---
@@ -321,6 +329,8 @@ However, the cosine alignment with the training-period GPR shock vector is negat
 3. **τ annealing dynamics.** With τ annealing from 0.99 to 0.9999 over only 1,300 steps, the target encoder's representations change significantly during training. The Exp 2 shock vector is computed from the final best-checkpoint encoder, but the target encoder at that checkpoint has τ≈0.991 (epoch 13 of 100 epochs). The online and target encoder representations may not be well-aligned for the masked-input case.
 
 4. **Masked input mismatch.** The model was trained with all 44 channels. Running inference with only 6 channels creates an out-of-distribution input. The shift direction in this degraded-input regime may differ from the shift direction under the full training distribution.
+
+![Exp 4 Ukraine event latent shift](charts/exp4_ukraine.png)
 
 > **For JEPA experts:** A negative cosine to v_GPR_shock is more informative than a near-zero cosine. It suggests the model has learned a GPR-correlated direction in latent space, but the 2022-02-24 event, when processed through 6 masked channels at an extreme GPR magnitude, activates a different (possibly opposing) subspace. This could be a context effect: a GPR spike that is entirely new in magnitude, occurring simultaneously with a major regime shift (rate hike cycle, post-COVID policy normalisation), may trigger latent dynamics more similar to the "calm with rising uncertainty" state than the historical "shock" state. The experiment passes the detection criterion (large Dz) but fails the alignment criterion (negative cosine).
 
