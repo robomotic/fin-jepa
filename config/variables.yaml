@@ -421,8 +421,8 @@ model:
   n_patches_context: 9   # 9 months visible to context encoder
   n_patches_target: 3    # predict next 3 months' latent patches
   mask_ratio: 0.70
-  tau_start: 0.99         # EMA momentum start (slower warmup for larger dataset)
-  tau_end: 0.9999         # EMA momentum target
+  tau_start: 0.996        # EMA momentum (flat — annealing to 0.9999 caused overfitting with 770 windows)
+  tau_end: 0.996          # EMA momentum target (same as start = flat schedule)
   d_model: 256
   n_heads: 8
   n_layers: 6

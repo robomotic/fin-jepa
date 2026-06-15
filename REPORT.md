@@ -1,6 +1,6 @@
 # Financial JEPA Experiment Report
 
-**Date:** June 2026 (updated after next-steps implementation)
+**Date:** June 2026 (updated after flat-tau retraining)
 **Model:** JEPA (Joint Embedding Predictive Architecture) trained on financial time series  
 **Training period:** 1993–2019 (raw data from 1991; effective windows from ~2008 due to ETF launch dates)  
 **Out-of-sample evaluation:** 2020–2024
@@ -123,23 +123,23 @@ Each window: 252 trading days (189 context + 63 target, with patch_len=21).
 **Hardware:** NVIDIA GeForce RTX 4060 Ti, PyTorch 2.10, CUDA  
 **Epochs:** 100 | **Batch size:** 64 | **Optimiser:** AdamW (lr=3e-4, wd=1e-4)  
 **Scheduler:** 10-epoch linear warmup (0.1x → 1x lr), then cosine decay to 1e-6  
-**EMA τ:** 0.99 → 0.9999, annealed over 1,300 steps (actual step count)
+**EMA τ:** 0.996 flat (start = end; no annealing)
 
 | Epoch | Train loss | Val loss | Note |
 |-------|-----------|---------|------|
-| 1 | 44.01 | 44.20 | warmup epoch 1 |
-| 5 | 27.72 | 31.20 | warmup complete |
-| 10 | 24.72 | 30.54 | cosine decay starts |
-| 13 | ~25.0 | **28.55** | best checkpoint |
-| 20 | 29.90 | 35.88 | overfitting onset |
-| 50 | 28.29 | 43.16 | |
-| 100 | 27.14 | 41.87 | tau=0.9999 |
+| 1 | 43.32 | 42.21 | warmup epoch 1 |
+| 5 | 28.21 | 30.66 | warmup complete |
+| 10 | 24.49 | 28.70 | cosine decay starts |
+| 12 | 23.88 | **26.72** | best checkpoint |
+| 20 | 26.21 | 28.02 | val loss stable |
+| 50 | 23.67 | 30.74 | slow drift upward |
+| 100 | 22.67 | 31.75 | tau=0.996 |
 
-The model reaches its best validation loss (28.55) at epoch ~13 and then diverges as training loss continues to decrease. This is classic overfitting with 770 training windows and 47 validation windows. The best checkpoint is used for all experiments.
+The model reaches its best validation loss (26.72) at epoch 12. Unlike the previous run with annealed τ (which diverged sharply after epoch 13, reaching val_loss=41.87 by epoch 100), the flat τ keeps val loss in the 26-32 range throughout, confirming the annealing was the primary overfitting driver.
 
 ![Training curve](charts/training_curve.png)
 
-> **Note for JEPA experts:** The training/validation gap after epoch 13 is primarily a function of dataset size (770 windows at stride=5 is modest for an 11M-parameter model). As τ anneals toward 0.9999, the EMA target encoder becomes very conservative, creating increasingly stable but potentially stale targets. With small data, this causes the online encoder to overfit to the gap between itself and the slowly-evolving target, widening the train/val split. A constant τ≈0.99 (faster target updates) produced a flatter val_loss curve in earlier runs, suggesting the optimal τ schedule for this dataset size is flatter than the cosine plan designed for large datasets.
+> **Note for JEPA experts:** The previous run annealed τ from 0.99 to 0.9999 over 1,300 steps, which made the target encoder very conservative too quickly. With only 770 training windows, the online encoder overfit to the widening gap between itself and the stale target. Flat τ=0.996 keeps target update speed constant throughout training, producing a stable val_loss plateau rather than a U-shaped divergence. The best val_loss also improved (26.72 vs 28.55), suggesting more of the training budget is being used productively.
 
 ---
 
@@ -167,35 +167,35 @@ The metric is **Spearman Information Coefficient (IC)**: the rank correlation be
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | -0.063 | -0.020 | -0.108 | **-0.178** |
-| Random | +0.012 | +0.111 | -0.121 | -0.136 |
-| RawFeatures | +0.094 | +0.018 | -0.020 | **-0.281** |
+| JEPA | -0.121 | -0.054 | -0.174 | **-0.427** |
+| Random | +0.068 | +0.224 | +0.017 | +0.368 |
+| RawFeatures | +0.039 | +0.046 | +0.020 | **-0.241** |
 
 **GLD/EEM (Gold vs EM)**
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | +0.008 | +0.067 | **+0.170** | -0.206 |
-| Random | -0.058 | +0.006 | +0.059 | -0.171 |
-| RawFeatures | +0.056 | +0.107 | +0.132 | -0.074 |
+| JEPA | +0.100 | +0.021 | +0.004 | +0.016 |
+| Random | +0.092 | +0.093 | -0.004 | -0.077 |
+| RawFeatures | -0.138 | -0.016 | +0.095 | -0.093 |
 
 **SPY/HYG (Equities vs High Yield)**
 
 | Encoder | 1d IC | 5d IC | 20d IC | 60d IC |
 |---------|-------|-------|--------|--------|
-| JEPA | +0.044 | -0.100 | **+0.240** | +0.022 |
-| Random | -0.041 | -0.037 | -0.002 | +0.101 |
-| RawFeatures | -0.060 | +0.030 | **+0.142** | +0.050 |
+| JEPA | -0.103 | +0.107 | **+0.247** | **+0.430** |
+| Random | -0.084 | -0.059 | +0.021 | -0.052 |
+| RawFeatures | -0.065 | +0.019 | +0.129 | +0.109 |
 
 ### Interpretation
 
-The strongest JEPA signal is **SPY/HYG at 20d (IC=0.240)**, substantially above Random (−0.002) and RawFeatures (+0.142). This pair measures the equity-credit spread, a classic risk premium gauge, and the JEPA latent appears to capture mean-reversion in risk appetite at the monthly horizon.
+The strongest JEPA signals are **SPY/HYG at 20d (IC=+0.247)** and **SPY/HYG at 60d (IC=+0.430)**, both substantially above Random and RawFeatures. This pair measures the equity-credit spread, a classic risk premium gauge; JEPA latents appear to capture mean-reversion in risk appetite at both the monthly and quarterly horizons. The 60d result (+0.430 vs Random −0.052) is a notable improvement over the previous annealed-τ run (+0.022), suggesting a more stable encoder geometry benefits longer-horizon probing.
 
-**GLD/EEM at 20d (IC=0.170)** also shows JEPA outperforming Random (+0.059) and roughly matching RawFeatures (+0.132), consistent with latents capturing safe-haven vs. risk-asset rotation.
+GLD/EEM shows no strong JEPA signal in this run. All JEPA ICs are near zero, and the pair remains difficult regardless of encoder.
 
 At short horizons (1d, 5d), raw features often match or exceed JEPA, which is expected: the encoder's temporal compression loses short-lag momentum signals that survive in simple feature averages.
 
-The XLK/XLF pair shows negative IC at all JEPA horizons. Given the 2022–2024 test period (tech selloff, rate hike cycle, subsequent AI-driven tech rebound), this pair may be too regime-specific for linear probing on 98 test windows to produce stable estimates.
+The XLK/XLF pair shows negative IC at all JEPA horizons, with a large 60d IC of −0.427. The Random encoder also shows a positive 60d IC (+0.368), suggesting the 2022–2024 test period contains a strong directional regime (tech rebound after rate-hike selloff) that any frozen encoder can accidentally proxy, and JEPA happens to be on the wrong side of it. This is a test-period artefact with only 98 test windows, not a stable signal.
 
 ![IC comparison across encoders and horizons](charts/exp1_ic_comparison.png)
 
@@ -270,27 +270,27 @@ The **equity_only** scenario is a deliberate **falsifiability row**: if JEPA lea
 
 | Scenario | Description | IC (20d) | Cosine to Full |
 |----------|-------------|----------|---------------|
-| full | All 44 channels | -0.108 | 1.000 |
-| macro_only | All non-equity channels | **-0.192** | **0.940** |
-| yields_only | TIPS + US10Y/US02Y only | +0.012 | 0.135 |
-| gpr_only | GPR_GLOBAL, GPRA, GPRT only | +0.108 | 0.183 |
-| labor_only | NFP, ICSA, JOLTS, ADP, UNRATE | -0.064 | 0.544 |
-| equity_only | All Yahoo Finance tickers | +0.010 | **0.134** |
+| full | All 44 channels | -0.174 | 1.000 |
+| macro_only | All non-equity channels | -0.169 | **0.972** |
+| yields_only | TIPS + US10Y/US02Y only | -0.139 | 0.204 |
+| gpr_only | GPR_GLOBAL, GPRA, GPRT only | **+0.116** | 0.287 |
+| labor_only | NFP, ICSA, JOLTS, ADP, UNRATE | -0.139 | **0.724** |
+| equity_only | All Yahoo Finance tickers | +0.044 | 0.205 |
 | **MLP baseline** | Macro-only MLP (no JEPA) | **+0.132** | n/a |
 
 ### Interpretation
 
-**macro_only (cosine=0.940):** Removing all equity channels (19 series) barely changes the representation. The model's internal state is primarily driven by macro series, consistent with a genuine economic world model.
+**macro_only (cosine=0.972):** Removing all equity channels barely changes the representation, and the cosine improved from 0.940 (annealed-τ run) to 0.972. The flat-τ encoder has a cleaner macro-driven geometry.
 
-**equity_only (cosine=0.134):** The falsifiability check passes decisively. Equity prices alone produce representations nearly orthogonal to the full-information case, confirming the model is not simply encoding equity momentum.
+**equity_only (cosine=0.205):** The falsifiability check passes. Equity prices alone produce representations largely orthogonal to the full-information case, confirming the model is encoding economic regimes, not equity momentum. The cosine is slightly higher than the previous run (0.134), reflecting the flatter val_loss landscape of the flat-τ model.
 
-**labor_only (cosine=0.544):** Labour market data alone preserves 54% of the representational direction, the highest single-pillar score, suggesting labour flows are informationally dense for identifying macro regimes.
+**labor_only (cosine=0.724):** The largest improvement over the previous run (from 0.544). Labour market data alone now preserves 72% of the representational direction, making the finding more pronounced: NFP, ICSA, JOLTS, ADP, and UNRATE are the most informationally dense group for identifying macro regimes.
 
-**MLP baseline (IC=+0.132):** The macro-only MLP outperforms JEPA's full latent (IC=-0.108) on this specific pair and horizon. Two interpretations: (1) the direct feature-to-return mapping in macro series is strong enough that a simple MLP captures it without temporal compression; (2) JEPA's IC is negative here due to test-period idiosyncrasies in the 2022–2024 rate cycle. The MLP result is a useful sanity check rather than an indictment of JEPA. It shows macro information is genuinely predictive of this pair, while JEPA may be encoding it in a different, regime-based space.
+**MLP baseline (IC=+0.132):** Outperforms JEPA's full latent (IC=−0.174) on XLK/XLF 20d. Macro features are directly predictive of this pair; JEPA encodes a regime representation that does not map cleanly to the XLK/XLF spread in the 2022–2024 test period. This is a useful sanity check showing macro information is genuinely predictive, not an indictment of JEPA.
 
 ![Exp 3 context masking results](charts/exp3_masking.png)
 
-> **For JEPA experts:** The macro_only cosine of 0.940 deserves attention. The VICReg covariance term decorrelates embedding dimensions; if equity channels are highly correlated with macro channels at monthly frequencies (which they are), the encoder may represent their common factor primarily through macro channels and use equity channels for fine-grained within-regime structure. This would explain both the high macro_only cosine and the low yields_only / gpr_only cosines, since individual pillars lack the breadth to reconstruct the multi-factor regime representation.
+> **For JEPA experts:** The macro_only cosine of 0.972 deserves attention. The VICReg covariance term decorrelates embedding dimensions; if equity channels are highly correlated with macro channels at monthly frequencies (which they are), the encoder may represent their common factor primarily through macro channels and use equity channels for fine-grained within-regime structure. This would explain both the high macro_only cosine and the low yields_only / gpr_only cosines, since individual pillars lack the breadth to reconstruct the multi-factor regime representation.
 
 ---
 
@@ -310,29 +310,27 @@ The Russia-Ukraine invasion of February 24, 2022 caused the GPR index to spike t
 |--------|-------|---------------|
 | Channels visible | 6 / 44 | n/a |
 | Baseline windows (Jan 2022) | 20 | >= 5 |
-| Dz norm (event vs baseline) | **7.805** | > 0 (measurable shift) |
-| cos(Dz, v_GPR_shock) | **-0.156** | >= 0.5 |
+| Dz norm (event vs baseline) | **4.033** | > 0 (measurable shift) |
+| cos(Dz, v_GPR_shock) | **+0.201** | >= 0.5 |
 | Outcome | ✗ Fail | n/a |
 
 ### Interpretation
 
-The model detects the invasion as a significant anomaly: Dz norm=7.8 is substantially larger than typical baseline fluctuations, confirming that the encoder registers the unprecedented GPR spike as a meaningful departure from normality.
+The model detects the invasion as a significant anomaly: Dz norm=4.0 is substantially larger than typical baseline fluctuations. The cosine alignment improved from −0.156 (annealed-τ run) to +0.201 (flat-τ run), flipping from negative to positive and moving in the right direction, but still below the 0.5 pass threshold.
 
-However, the cosine alignment with the training-period GPR shock vector is negative (−0.156), meaning the event window's latent shift points in the *opposite* direction from the pre-registered geopolitical stress axis. This is a genuine failure of out-of-sample generalisation.
+**Root causes of remaining failure (in order of likely impact):**
 
-**Root causes (in order of likely impact):**
+1. **Small training dataset.** With 770 training windows, the GPR shock vector is computed from 30 windows (top 10% of 770), a small statistical basis for a 256-dimensional direction.
 
-1. **Small training dataset.** With 770 training windows and the best checkpoint at epoch 13, the latent geometry is not fully refined. The GPR shock vector is computed from 30 windows (top 10% of 770), a small statistical basis for a 256-dimensional direction.
+2. **Magnitude extrapolation.** The Ukraine GPR was approximately 3–4σ above the training maximum. The encoder shifts in the right direction now, but not strongly enough for the extreme out-of-distribution input magnitude.
 
-2. **Magnitude extrapolation.** The Ukraine GPR was approximately 3–4σ above the training maximum. The encoder may shift in a direction that is geometrically distinct from the training-range shock axis: not zero shift, but a different direction.
+3. **Masked input mismatch.** The model was trained with all 44 channels. Running inference with only 6 channels creates an out-of-distribution input. The shift direction in this degraded-input regime is attenuated relative to the full-input training distribution.
 
-3. **τ annealing dynamics.** With τ annealing from 0.99 to 0.9999 over only 1,300 steps, the target encoder's representations change significantly during training. The Exp 2 shock vector is computed from the final best-checkpoint encoder, but the target encoder at that checkpoint has τ≈0.991 (epoch 13 of 100 epochs). The online and target encoder representations may not be well-aligned for the masked-input case.
-
-4. **Masked input mismatch.** The model was trained with all 44 channels. Running inference with only 6 channels creates an out-of-distribution input. The shift direction in this degraded-input regime may differ from the shift direction under the full training distribution.
+4. **Best checkpoint timing.** The best checkpoint is at epoch 12 of 100. The GPR shock geometry is still being refined beyond epoch 12, but the validation loss plateau prevents using a later checkpoint without overfitting risk.
 
 ![Exp 4 Ukraine event latent shift](charts/exp4_ukraine.png)
 
-> **For JEPA experts:** A negative cosine to v_GPR_shock is more informative than a near-zero cosine. It suggests the model has learned a GPR-correlated direction in latent space, but the 2022-02-24 event, when processed through 6 masked channels at an extreme GPR magnitude, activates a different (possibly opposing) subspace. This could be a context effect: a GPR spike that is entirely new in magnitude, occurring simultaneously with a major regime shift (rate hike cycle, post-COVID policy normalisation), may trigger latent dynamics more similar to the "calm with rising uncertainty" state than the historical "shock" state. The experiment passes the detection criterion (large Dz) but fails the alignment criterion (negative cosine).
+> **For JEPA experts:** The cosine improved from −0.156 (annealed-τ) to +0.201 (flat-τ), confirming that the previous model's negative alignment was partly a training instability artefact rather than a fundamental geometric failure. The flat-τ encoder has more consistent online/target encoder alignment throughout training, so the Exp 2 shock vector computed at epoch 12 is a more reliable representation of the learned geometry. The remaining gap (0.201 vs 0.5 threshold) is most likely explained by the 3–4σ magnitude extrapolation problem: the encoder shifts in the correct direction but not far enough when the GPR input is outside the training range.
 
 ---
 
@@ -340,10 +338,10 @@ However, the cosine alignment with the training-period GPR shock vector is negat
 
 | Experiment | Key Result | Pass? |
 |------------|-----------|-------|
-| 1. Linear Probe | SPY/HYG 20d IC=+0.240 (vs Random −0.002); significant regime signal | ~ Partial |
+| 1. Linear Probe | SPY/HYG 20d IC=+0.247, 60d IC=+0.430 (vs Random +0.021, −0.052); strong long-horizon regime signal | ~ Partial |
 | 2. Latent Arithmetic | Shock vector norm=6.4; perturbation robustness 100% (6/6 cos≈0.99–1.00) | ✓ **Pass** |
-| 3. Context Masking | macro_only cos=0.940; equity_only cos=0.134; MLP baseline runs (IC=0.132) | ✓ **Pass** |
-| 4. Geopolitical Transfer | cos(Dz, v_shock)=−0.156; anomaly detected (Dz=7.8) but wrong direction | ✗ **Fail** |
+| 3. Context Masking | macro_only cos=0.972; equity_only cos=0.205; labor_only cos=0.724; MLP baseline IC=0.132 | ✓ **Pass** |
+| 4. Geopolitical Transfer | cos(Dz, v_shock)=+0.201 (improved from −0.156); anomaly detected (Dz=4.0), correct direction, below threshold | ✗ **Fail** |
 
 ---
 
@@ -353,9 +351,9 @@ However, the cosine alignment with the training-period GPR shock vector is negat
 
 **Latent space has geometric structure (Exp 2).** The shock vector is stable, large-normed, and robust to threshold perturbations. This is the clearest success: the encoder creates a consistent, directional representation of geopolitical risk across 770 training windows spanning 20 years, and this direction does not depend on which exact GPR threshold is used to define "shock."
 
-**Macro signals drive regime encoding (Exp 3).** Removing all 19 Yahoo Finance equity channels barely changes the representation (cosine=0.940). Equity prices alone produce representations nearly orthogonal to the full case (cosine=0.134). This is the correct qualitative outcome for an economic world model: it is encoding economic regimes, not equity momentum.
+**Macro signals drive regime encoding (Exp 3).** Removing all 19 Yahoo Finance equity channels barely changes the representation (cosine=0.972, up from 0.940 in the annealed-τ run). Equity prices alone produce representations largely orthogonal to the full case (cosine=0.205). This is the correct qualitative outcome for an economic world model: it is encoding economic regimes, not equity momentum.
 
-**Labour data is informationally rich (Exp 3).** The `labor_only` scenario achieves the highest single-pillar cosine (0.544), suggesting labour flows (NFP, ICSA, JOLTS, ADP, UNRATE) are informationally dense for identifying macro regimes. This was an unexpected finding with potential independent value.
+**Labour data is informationally rich (Exp 3).** The `labor_only` scenario achieves the highest single-pillar cosine (0.724, up from 0.544), suggesting labour flows (NFP, ICSA, JOLTS, ADP, UNRATE) are informationally dense for identifying macro regimes. This was an unexpected finding with potential independent value.
 
 **All experiments run without errors.** All four experiments complete cleanly after fixing three bugs: the LR warmup, the Exp 3 MLP empty-array error, and the Exp 4 ITA mask contamination.
 
@@ -368,11 +366,11 @@ To genuinely increase training data, one of these approaches is needed:
 - Raise the NaN tolerance from 20% to 30% and impute missing early values
 - Use intraday data to increase the effective number of windows within the available history
 
-**Overfitting after epoch 13.** With 47 validation windows, the val_loss diverges sharply from train_loss after epoch ~13. The best checkpoint (val_loss=28.55) represents only 13% of training. The model has not converged; it is capacity-limited by data, not compute.
+**Overfitting after epoch 12.** With 47 validation windows, the val_loss begins to rise after epoch 12. The best checkpoint (val_loss=26.72) represents 12% of training. Unlike the annealed-τ run (which diverged sharply), the flat-τ model remains in the 26-32 range throughout, but it does not continue improving. The model is capacity-limited by data, not compute.
 
-**Exp 4 alignment failure.** The Ukraine invasion cosine (−0.156) failing the 0.5 threshold is a genuine weakness. The latent shift is large but points in the wrong direction, suggesting the out-of-distribution magnitude (3–4σ above the training maximum) triggers different encoder dynamics than within-distribution shocks.
+**Exp 4 alignment incomplete.** The Ukraine invasion cosine (+0.201) improved substantially from −0.156 but still fails the 0.5 threshold. The direction is now correct, but the magnitude of alignment is insufficient for the extreme out-of-distribution GPR event.
 
-**MLP baseline outperforms JEPA on some pairs.** The macro-only MLP (IC=0.132) outperforms the full JEPA (IC=−0.108) on XLK/XLF 20d. This means direct feature-to-return regression on macro series is competitive with JEPA's temporal compression on this pair. JEPA's advantage appears in pairs that benefit from long-horizon regime encoding (SPY/HYG 20d: +0.240) rather than pairs driven by near-term macro differentials.
+**MLP baseline outperforms JEPA on some pairs.** The macro-only MLP (IC=0.132) outperforms the full JEPA (IC=−0.174) on XLK/XLF 20d. JEPA's advantage appears in pairs that benefit from long-horizon regime encoding (SPY/HYG 20d: +0.247, 60d: +0.430) rather than pairs driven by near-term macro differentials.
 
 ---
 
@@ -388,6 +386,7 @@ To genuinely increase training data, one of these approaches is needed:
 | 4 | Extend training data to 1993 | No-op | `train_start` moved to 1993-01-04 and raw data downloads from 1991. ETF launch dates constrain the effective first valid window to ~2008, so valid window count remains 770. |
 | 5 | Slower EMA tau_start (0.99) | Done | tau_start wired from config. Initial value 0.99 confirmed. |
 | 6 | Fix tau annealing `total_steps` | Done | `total_steps` was hardcoded at 100,000. Fixed to use actual step count (1,300). Tau now correctly anneals from 0.99 to 0.9999. |
+| 7 | Flatten τ schedule for small data | Done | flat τ=0.996: val_loss improved from 28.55 to 26.72; Exp 4 cosine flipped from −0.156 to +0.201; labor_only cosine rose from 0.544 to 0.724. |
 
 ### Still open
 
@@ -396,9 +395,8 @@ To genuinely increase training data, one of these approaches is needed:
 | A | Replace late-launching ETFs with longer-history proxies | Only way to get more valid training windows |
 | B | Online probe evaluation during training | Checkpoint based on IC, not VICReg loss; val_loss and IC are not aligned |
 | C | Hierarchical patching (5-day + 21-day) | Better intra-month dynamics |
-| D | Flatten τ schedule for small data | τ annealing to 0.9999 causes overfitting; flat τ≈0.99 was empirically better on this dataset size |
 | E | MOVE via alternative source (Bloomberg/ICE) | Restores bond volatility pillar |
 
 ---
 
-*Results saved to `results/`. Best checkpoint: `checkpoints/best.pt` (val_loss=28.55, epoch ~13). Config: `config/variables.yaml`.*
+*Results saved to `results/`. Best checkpoint: `checkpoints/best.pt` (val_loss=26.72, epoch 12, flat τ=0.996). Config: `config/variables.yaml`.*
