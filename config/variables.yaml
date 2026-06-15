@@ -98,8 +98,9 @@ series:
     role: both
 
   GLD:
-    source: yahoo
-    id: GC=F              # gold front-month futures (replaces GLD ETF; from 2000-08-30)
+    source: nasdaqdl
+    id: LBMA/GOLD         # London PM gold fix USD/troy oz (from 1968-01-02; requires NASDAQ_DATA_LINK_API_KEY)
+    column: "USD (PM)"
     frequency: daily
     transform: log_return
     pillar: 2

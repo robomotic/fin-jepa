@@ -39,6 +39,7 @@ def build_raw_panel(config: dict, start_date: str = "1999-01-01") -> pd.DataFram
     from data.sources.gpr import fetch_gpr_daily
     from data.sources.epu import fetch_epu_us, fetch_epu_global
     from data.sources.gscpi import fetch_gscpi
+    from data.sources.nasdaqdl import fetch_dataset
 
     frames: list[pd.DataFrame] = []
 
@@ -53,6 +54,21 @@ def build_raw_panel(config: dict, start_date: str = "1999-01-01") -> pd.DataFram
     if yahoo_map:
         yahoo_df = fetch_all_yahoo_tickers(yahoo_map, start_date=start_date)
         frames.append(yahoo_df)
+
+    # Nasdaq Data Link (LBMA gold, etc.)
+    nasdaqdl_series = {n: c for n, c in config["series"].items() if c["source"] == "nasdaqdl"}
+    for series_name, cfg in nasdaqdl_series.items():
+        try:
+            s = fetch_dataset(
+                dataset_code=cfg["id"],
+                column=cfg.get("column", "USD (PM)"),
+                series_name=series_name,
+                start_date=start_date,
+            )
+            if not s.empty:
+                frames.append(s.to_frame())
+        except Exception as e:
+            logger.warning(f"Nasdaq DL download failed for {series_name} ({cfg['id']}): {e}")
 
     # GPR
     gpr_series = {n: c for n, c in config["series"].items() if c["source"] == "gpr"}
