@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -51,6 +52,12 @@ def parse_args() -> argparse.Namespace:
                    help="Re-download all data even if cache exists")
     p.add_argument("--no-diagnostics",  action="store_true",
                    help="Skip statistical diagnostics (faster first run)")
+    p.add_argument("--probe-every",     type=int,   default=5,
+                   help="Run IC probe on val set every N epochs (0=disable)")
+    p.add_argument("--probe-pair",      default="SPY/HYG",
+                   help="Numerator/denominator pair for checkpointing IC (e.g. SPY/HYG)")
+    p.add_argument("--probe-horizon",   type=int,   default=20,
+                   help="Forward-return horizon in days for checkpointing IC")
     return p.parse_args()
 
 
@@ -91,6 +98,12 @@ def train(args: argparse.Namespace) -> None:
         run_diagnostics=not args.no_diagnostics,
     )
     train_ds, val_ds, test_ds = build_datasets(splits, config)
+
+    # Full panel for forward-return labels used by the online IC probe
+    prices_full = pd.concat(
+        [splits["train"], splits["val"], splits["test"]]
+    ).sort_index()
+    prices_full = prices_full[~prices_full.index.duplicated(keep="last")]
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
@@ -148,6 +161,12 @@ def train(args: argparse.Namespace) -> None:
 
     start_epoch = 0
     best_val_loss = float("inf")
+    best_val_ic   = float("-inf")
+
+    # Parse probe pair
+    _probe_parts = args.probe_pair.split("/")
+    probe_num, probe_den = _probe_parts[0].strip(), _probe_parts[1].strip()
+    use_ic_checkpoint = args.probe_every > 0
 
     if args.resume and args.checkpoint:
         ckpt = torch.load(args.checkpoint, map_location=device)
@@ -155,6 +174,7 @@ def train(args: argparse.Namespace) -> None:
         optimizer.load_state_dict(ckpt["optimizer"])
         start_epoch = ckpt["epoch"] + 1
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        best_val_ic   = ckpt.get("best_val_ic",   float("-inf"))
         logger.info(f"Resumed from epoch {start_epoch}")
 
     # Training loop
@@ -188,23 +208,43 @@ def train(args: argparse.Namespace) -> None:
         val_loss = evaluate(jepa, val_loader, device)
         scheduler.step()
 
+        # Online IC probe (cheap: ~13 forward passes on train + 1 on val)
+        val_ic = float("nan")
+        run_probe = (
+            use_ic_checkpoint
+            and ((epoch + 1) % args.probe_every == 0 or epoch == 0)
+        )
+        if run_probe:
+            val_ic = _val_probe_ic(
+                jepa, train_ds, val_ds, prices_full, device,
+                probe_num, probe_den, args.probe_horizon,
+            )
+
+        ic_str = f"  val_ic={val_ic:+.4f}" if not (val_ic != val_ic) else ""
         logger.info(
             f"Epoch {epoch+1}/{args.epochs}  "
             f"train_loss={train_metrics.get('loss_total', 0):.4f}  "
             f"val_loss={val_loss:.4f}  "
             f"tau={jepa.target_encoder.current_tau:.5f}"
+            f"{ic_str}"
         )
 
-        # Checkpoint
-        is_best = val_loss < best_val_loss
-        if is_best:
-            best_val_loss = val_loss
+        # Checkpoint: prefer IC when available, fall back to val_loss
+        if use_ic_checkpoint and not math.isnan(val_ic):
+            is_best = val_ic > best_val_ic
+            if is_best:
+                best_val_ic = val_ic
+        else:
+            is_best = val_loss < best_val_loss
+            if is_best:
+                best_val_loss = val_loss
 
         ckpt = {
             "epoch": epoch,
             "model": jepa.state_dict(),
             "optimizer": optimizer.state_dict(),
             "best_val_loss": best_val_loss,
+            "best_val_ic": best_val_ic,
             "config": model_cfg,
             "n_features": n_features,
             "columns": train_ds.columns,
@@ -212,10 +252,38 @@ def train(args: argparse.Namespace) -> None:
         torch.save(ckpt, ckpt_dir / "latest.pt")
         if is_best:
             torch.save(ckpt, ckpt_dir / "best.pt")
-            logger.info(f"  ↳ New best model (val_loss={val_loss:.4f})")
+            if use_ic_checkpoint and not math.isnan(val_ic):
+                logger.info(f"  ↳ New best model (val_ic={val_ic:+.4f})")
+            else:
+                logger.info(f"  ↳ New best model (val_loss={val_loss:.4f})")
 
     logger.info("Training complete.")
     _run_all_experiments(jepa, splits, train_ds, val_ds, test_ds, config, device)
+
+
+@torch.no_grad()
+def _val_probe_ic(
+    jepa: JEPA,
+    train_ds: FinancialJEPADataset,
+    val_ds: FinancialJEPADataset,
+    prices_full: pd.DataFrame,
+    device: torch.device,
+    num: str,
+    den: str,
+    horizon: int,
+) -> float:
+    """Fit Ridge on frozen train latents; return Spearman IC on val latents."""
+    from experiments.exp1_linear_probe import (
+        extract_latents, compute_forward_returns, run_linear_probe,
+    )
+    if num not in prices_full.columns or den not in prices_full.columns:
+        return float("nan")
+    latents_tr, dates_tr = extract_latents(jepa.encoder, train_ds, device)
+    latents_val, dates_val = extract_latents(jepa.encoder, val_ds, device)
+    fwd = compute_forward_returns(prices_full, num, den, horizon)
+    labels_tr  = fwd.reindex(pd.to_datetime(dates_tr)).values
+    labels_val = fwd.reindex(pd.to_datetime(dates_val)).values
+    return run_linear_probe(latents_tr, labels_tr, latents_val, labels_val)
 
 
 @torch.no_grad()
