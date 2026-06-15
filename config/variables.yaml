@@ -1,0 +1,447 @@
+# Canonical series registry.
+# Every module reads from this file — do not hardcode tickers elsewhere.
+#
+# transform options: level | diff | log_return
+# role options:      input | target | both
+# source options:    fred | yahoo | gpr | epu | gscpi
+
+series:
+
+  # ── Pillar 1: Cost of Capital ─────────────────────────────────────────────
+  US10Y:
+    source: fred
+    id: DGS10
+    frequency: daily
+    transform: level
+    pillar: 1
+    role: input
+
+  US02Y:
+    source: fred
+    id: DGS2
+    frequency: daily
+    transform: level
+    pillar: 1
+    role: input
+
+  TIPS5Y:
+    source: fred
+    id: T5YIE
+    frequency: daily
+    transform: level
+    pillar: 1
+    role: input
+
+  TIPS5Y5Y:
+    source: fred
+    id: T5YIFR
+    frequency: daily
+    transform: level
+    pillar: 1
+    role: input
+
+  MOVE:
+    source: fred
+    id: MOVE
+    frequency: daily
+    transform: level
+    pillar: 1
+    role: input
+
+  XLK:
+    source: yahoo
+    id: XLK
+    frequency: daily
+    transform: log_return
+    pillar: 1
+    role: target
+
+  XLF:
+    source: yahoo
+    id: XLF
+    frequency: daily
+    transform: log_return
+    pillar: 1
+    role: target
+
+  TLT:
+    source: yahoo
+    id: TLT
+    frequency: daily
+    transform: log_return
+    pillar: 1
+    role: both
+
+  # ── Pillar 2: Global Liquidity & Safe Haven ───────────────────────────────
+  DXY:
+    source: yahoo
+    id: DX-Y.NYB
+    frequency: daily
+    transform: log_return
+    pillar: 2
+    role: input
+
+  VIX:
+    source: yahoo
+    id: ^VIX
+    frequency: daily
+    transform: level
+    pillar: 2
+    role: input
+
+  EEM:
+    source: yahoo
+    id: EEM
+    frequency: daily
+    transform: log_return
+    pillar: 2
+    role: both
+
+  GLD:
+    source: yahoo
+    id: GLD
+    frequency: daily
+    transform: log_return
+    pillar: 2
+    role: both
+
+  FXY:
+    source: yahoo
+    id: FXY
+    frequency: daily
+    transform: log_return
+    pillar: 2
+    role: both
+
+  # ── Pillar 3: Supply Chain & Inflation ────────────────────────────────────
+  USO:
+    source: yahoo
+    id: USO
+    frequency: daily
+    transform: log_return
+    pillar: 3
+    role: both
+
+  BDI:
+    source: yahoo
+    id: ^BDI
+    frequency: daily
+    transform: log_return
+    pillar: 3
+    role: input
+
+  GSCPI:
+    source: gscpi
+    id: GSCPI
+    frequency: monthly
+    pub_lag_days: 45
+    transform: level
+    pillar: 3
+    role: input
+
+  XLY:
+    source: yahoo
+    id: XLY
+    frequency: daily
+    transform: log_return
+    pillar: 3
+    role: target
+
+  XLE:
+    source: yahoo
+    id: XLE
+    frequency: daily
+    transform: log_return
+    pillar: 3
+    role: target
+
+  XLB:
+    source: yahoo
+    id: XLB
+    frequency: daily
+    transform: log_return
+    pillar: 3
+    role: target
+
+  # ── Pillar 4: Geopolitical Risk ───────────────────────────────────────────
+  GPR_GLOBAL:
+    source: gpr
+    id: GPR
+    frequency: daily
+    transform: level
+    pillar: 4
+    role: input
+
+  GPRA:
+    source: gpr
+    id: GPRA
+    frequency: daily
+    transform: level
+    pillar: 4
+    role: input
+
+  GPRT:
+    source: gpr
+    id: GPRT
+    frequency: daily
+    transform: level
+    pillar: 4
+    role: input
+
+  ITA:
+    source: yahoo
+    id: ITA
+    frequency: daily
+    transform: log_return
+    pillar: 4
+    role: target
+
+  # ── Pillar 5: Policy Uncertainty & Financial Conditions ───────────────────
+  EPU_US:
+    source: epu
+    id: EPU_US
+    frequency: monthly
+    pub_lag_days: 30
+    transform: level
+    pillar: 5
+    role: input
+
+  EPU_GLOBAL:
+    source: epu
+    id: GEPU_current
+    frequency: monthly
+    pub_lag_days: 30
+    transform: level
+    pillar: 5
+    role: input
+
+  NFCI:
+    source: fred
+    id: NFCI
+    frequency: weekly
+    transform: level
+    pillar: 5
+    role: input
+
+  NFCI_RISK:
+    source: fred
+    id: NFCIRISK
+    frequency: weekly
+    transform: level
+    pillar: 5
+    role: input
+
+  STLFSI:
+    source: fred
+    id: STLFSI4
+    frequency: weekly
+    transform: level
+    pillar: 5
+    role: input
+
+  HYG:
+    source: yahoo
+    id: HYG
+    frequency: daily
+    transform: log_return
+    pillar: 5
+    role: both
+
+  IWM:
+    source: yahoo
+    id: IWM
+    frequency: daily
+    transform: log_return
+    pillar: 5
+    role: both
+
+  # ── Pillar 6: Labor Market & Realized Inflation ───────────────────────────
+  CORE_PCE:
+    source: fred
+    id: PCEPILFE
+    frequency: monthly
+    pub_lag_days: 30
+    transform: diff
+    pillar: 6
+    role: input
+
+  CORE_CPI:
+    source: fred
+    id: CPILFESL
+    frequency: monthly
+    pub_lag_days: 14
+    transform: diff
+    pillar: 6
+    role: input
+
+  CPI:
+    source: fred
+    id: CPIAUCSL
+    frequency: monthly
+    pub_lag_days: 14
+    transform: diff
+    pillar: 6
+    role: input
+
+  PPI:
+    source: fred
+    id: PPIACO
+    frequency: monthly
+    pub_lag_days: 14
+    transform: diff
+    pillar: 6
+    role: input
+
+  MICH:
+    source: fred
+    id: MICH
+    frequency: monthly
+    pub_lag_days: 5
+    transform: level
+    pillar: 6
+    role: input
+
+  UNRATE:
+    source: fred
+    id: UNRATE
+    frequency: monthly
+    pub_lag_days: 5
+    transform: diff
+    pillar: 6
+    role: input
+
+  NFP:
+    source: fred
+    id: PAYEMS
+    frequency: monthly
+    pub_lag_days: 5
+    transform: diff
+    pillar: 6
+    role: input
+
+  ICSA:
+    source: fred
+    id: ICSA
+    frequency: weekly
+    pub_lag_days: 4
+    transform: level
+    pillar: 6
+    role: input
+
+  JOLTS:
+    source: fred
+    id: JTSJOL
+    frequency: monthly
+    pub_lag_days: 35
+    transform: level
+    pillar: 6
+    role: input
+
+  ADP:
+    source: fred
+    id: ADPMNUSNERSA
+    frequency: monthly
+    pub_lag_days: 2
+    transform: diff
+    pillar: 6
+    role: input
+
+  # ── Broad Market Regime Trackers (cross-pillar) ───────────────────────────
+  SPY:
+    source: yahoo
+    id: SPY
+    frequency: daily
+    transform: log_return
+    pillar: null
+    role: both
+
+  QQQ:
+    source: yahoo
+    id: QQQ
+    frequency: daily
+    transform: log_return
+    pillar: null
+    role: both
+
+  RSP:
+    source: yahoo
+    id: RSP
+    frequency: daily
+    transform: log_return
+    pillar: null
+    role: both
+
+  EFA:
+    source: yahoo
+    id: EFA
+    frequency: daily
+    transform: log_return
+    pillar: null
+    role: both
+
+  # ── Bridge Series ─────────────────────────────────────────────────────────
+  WEI:
+    source: fred
+    id: WEI
+    frequency: weekly
+    transform: level
+    pillar: null
+    role: input
+
+  CFNAI:
+    source: fred
+    id: CFNAI
+    frequency: monthly
+    pub_lag_days: 30
+    transform: level
+    pillar: null
+    role: input
+
+# ── Train / Val / Test splits ─────────────────────────────────────────────────
+splits:
+  train_start: "1993-01-04"
+  train_end:   "2019-12-31"
+  embargo_days: 20
+  val_start:   "2020-02-03"
+  val_end:     "2021-12-31"
+  test_start:  "2022-01-24"
+  test_end:    "2024-12-31"
+  geopolitical_event_date: "2022-02-24"   # Russia-Ukraine invasion
+
+# ── Normalization ─────────────────────────────────────────────────────────────
+normalization:
+  method: expanding_zscore
+  min_burn_in_days: 252
+  clip_sigma: 5.0
+  missing_window_threshold: 0.20
+
+# ── Model / Dataset ───────────────────────────────────────────────────────────
+model:
+  patch_len: 21           # 1 trading month per patch
+  n_patches_context: 9   # 9 months visible to context encoder
+  n_patches_target: 3    # predict next 3 months' latent patches
+  mask_ratio: 0.70
+  tau_start: 0.99         # EMA momentum start (slower warmup for larger dataset)
+  tau_end: 0.9999         # EMA momentum target
+  d_model: 256
+  n_heads: 8
+  n_layers: 6
+  d_ff: 1024
+  dropout: 0.1
+
+# ── Experiment settings ───────────────────────────────────────────────────────
+experiments:
+  linear_probe:
+    horizons_days: [1, 5, 20, 60]
+    target_pairs:
+      - [XLK, XLF]    # regime: rate sensitivity
+      - [GLD, EEM]    # safe haven vs. EM
+      - [SPY, HYG]    # risk-on breadth
+  latent_arithmetic:
+    gpr_shock_pct: 90    # GPR_DAILY > this percentile → shock
+    gpr_calm_pct: 25     # GPR_DAILY < this → calm
+    perturbation_days: 5
+    perturbation_pct: 10
+  geopolitical_transfer:
+    event_date: "2022-02-24"
+    baseline_window_days: 21

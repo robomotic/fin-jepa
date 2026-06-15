@@ -1,0 +1,39 @@
+# Secrets and local config
+.env
+*.key
+~/.fred_api_key
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Data caches (large, re-downloadable)
+data/cache/
+
+# Checkpoints (large binary files)
+checkpoints/
+
+# Results (re-runnable)
+results/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code instructions (local only)
+CLAUDE.md
