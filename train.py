@@ -335,6 +335,7 @@ def _run_all_experiments(
     from experiments.exp2_latent_arithmetic import run_experiment_2
     from experiments.exp3_context_masking import run_experiment_3
     from experiments.exp4_geopolitical_transfer import run_experiment_4
+    from experiments.exp5_yield_curve_sanity import run_experiment_5
 
     results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
@@ -389,6 +390,19 @@ def _run_all_experiments(
     logger.info(f"\nExp 4 — Δz norm: {exp4_result['delta_z_norm']:.4f}")
     if exp4_result["cosine_to_shock"] is not None:
         logger.info(f"Exp 4 — cos(Δz, v_shock): {exp4_result['cosine_to_shock']:.4f}")
+
+    # Exp 5 — yield curve sanity check (uses val+test panel so target encoder
+    # sees enough 2022 history; same panel already built for Exp 4)
+    logger.info("\n══ Running Experiment 5: Yield Curve Sanity Check ══")
+    exp5_result = run_experiment_5(
+        jepa, val_test_panel, config, device,
+        output_dir=results_dir / "exp5",
+    )
+    status = "PASS" if exp5_result.get("passed") else ("SKIP" if exp5_result.get("skipped") else "FAIL")
+    logger.info(
+        f"Exp 5 — cosine sim (trained): {exp5_result.get('trained_cosine_mean', float('nan')):.4f}  "
+        f"(random: {exp5_result.get('random_cosine_mean', float('nan')):.4f})  [{status}]"
+    )
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────

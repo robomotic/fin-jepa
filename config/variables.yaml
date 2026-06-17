@@ -48,6 +48,15 @@ series:
     pillar: 1
     role: input
 
+  FEDFUNDS:
+    source: fred
+    id: FEDFUNDS          # Effective Federal Funds Rate (daily); anchor for the yield curve
+    frequency: daily
+    pub_lag_days: 1
+    transform: diff
+    pillar: 1
+    role: input
+
   XLK:
     source: yahoo
     id: XLK
@@ -128,6 +137,33 @@ series:
     id: ^BDI
     frequency: daily
     transform: log_return
+    pillar: 3
+    role: input
+
+  PPICMM:
+    source: fred
+    id: PPICMM            # PPI: Intermediate Materials, Supplies & Components (midstream inflation)
+    frequency: monthly
+    pub_lag_days: 14
+    transform: diff
+    pillar: 3
+    role: input
+
+  INDPRO:
+    source: fred
+    id: INDPRO            # Industrial Production Total Index (hard factory output metric)
+    frequency: monthly
+    pub_lag_days: 16
+    transform: diff
+    pillar: 3
+    role: input
+
+  TCU:
+    source: fred
+    id: TCU               # Total Capacity Utilization (% of production capacity in use)
+    frequency: monthly
+    pub_lag_days: 16
+    transform: level
     pillar: 3
     role: input
 
