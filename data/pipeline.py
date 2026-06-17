@@ -40,6 +40,7 @@ def build_raw_panel(config: dict, start_date: str = "1999-01-01") -> pd.DataFram
     from data.sources.epu import fetch_epu_us, fetch_epu_global
     from data.sources.gscpi import fetch_gscpi
     from data.sources.nasdaqdl import fetch_dataset
+    from data.sources.boe import fetch_spliced_gold
 
     frames: list[pd.DataFrame] = []
 
@@ -55,7 +56,7 @@ def build_raw_panel(config: dict, start_date: str = "1999-01-01") -> pd.DataFram
         yahoo_df = fetch_all_yahoo_tickers(yahoo_map, start_date=start_date)
         frames.append(yahoo_df)
 
-    # Nasdaq Data Link (LBMA gold, etc.)
+    # Nasdaq Data Link (LBMA gold, etc.) — requires NASDAQ_DATA_LINK_API_KEY
     nasdaqdl_series = {n: c for n, c in config["series"].items() if c["source"] == "nasdaqdl"}
     for series_name, cfg in nasdaqdl_series.items():
         try:
@@ -69,6 +70,16 @@ def build_raw_panel(config: dict, start_date: str = "1999-01-01") -> pd.DataFram
                 frames.append(s.to_frame())
         except Exception as e:
             logger.warning(f"Nasdaq DL download failed for {series_name} ({cfg['id']}): {e}")
+
+    # Bank of England IADB — spliced gold (BoE XUDLGPD 1979–2017 + Yahoo GC=F 2000–present)
+    boe_series = {n: c for n, c in config["series"].items() if c["source"] == "boe"}
+    for series_name, cfg in boe_series.items():
+        try:
+            s = fetch_spliced_gold(start_date=start_date, series_name=series_name)
+            if not s.empty:
+                frames.append(s.to_frame())
+        except Exception as e:
+            logger.warning(f"BoE download failed for {series_name}: {e}")
 
     # GPR
     gpr_series = {n: c for n, c in config["series"].items() if c["source"] == "gpr"}
