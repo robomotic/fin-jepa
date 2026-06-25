@@ -3,7 +3,7 @@
 #
 # transform options: level | diff | log_return
 # role options:      input | target | both
-# source options:    fred | yahoo | gpr | epu | gscpi
+# source options:    fred | yahoo | gpr | epu | gscpi | nasdaqdl | boe
 
 series:
 
@@ -50,7 +50,7 @@ series:
 
   FEDFUNDS:
     source: fred
-    id: FEDFUNDS          # Effective Federal Funds Rate (daily); anchor for the yield curve
+    id: DFF               # Daily Effective Federal Funds Rate (actual daily series; FEDFUNDS is monthly)
     frequency: daily
     pub_lag_days: 1
     transform: diff
@@ -456,6 +456,16 @@ model:
   n_layers: 6
   d_ff: 1024
   dropout: 0.1
+
+# ── CF-JEPA settings (used when --cf-jepa flag is passed to train.py) ─────────
+cf_jepa:
+  n_patches_short: 1        # short horizon: 1 patch  = 21 days (~1 month)
+  n_patches_mid: 2          # mid   horizon: 2 patches = 42 days (~2 months)
+  n_patches_long: 3         # long  horizon: 3 patches = 63 days (~3 months)
+  crop_jitter_patches: 1    # context start jitter: up to 1 patch = 21 days
+  w_short: 1.0              # loss weight for short-horizon VICReg term
+  w_mid: 1.0                # loss weight for mid-horizon VICReg term
+  w_long: 1.0               # loss weight for long-horizon VICReg term
 
 # ── Experiment settings ───────────────────────────────────────────────────────
 experiments:

@@ -212,3 +212,101 @@ class FinancialJEPADataset(Dataset):
         """Keep only columns from one specific pillar, zero everything else."""
         m = self._pillar_col_mask.get(pillar, np.zeros(self.D, dtype=bool))
         return torch.from_numpy(m)
+
+
+class CFJEPADataset(Dataset):
+    """Sliding-window dataset for CF-JEPA training.
+
+    Each sample provides:
+      context:      [T_ctx, D]   — randomly jittered contiguous crop
+      target_short: [T_short, D] — next n_patches_short patches after context
+      target_mid:   [T_mid,   D] — next n_patches_mid   patches after context
+      target_long:  [T_long,  D] — next n_patches_long  patches after context
+
+    The crop jitter (up to crop_jitter_patches × patch_len timesteps) shifts the
+    context start within each base window, augmenting training diversity without
+    needing a separate masking mechanism.
+    """
+
+    def __init__(
+        self,
+        panel: pd.DataFrame,
+        config: dict,
+        patch_len: int = 21,
+        n_patches_context: int = 9,
+        n_patches_short: int = 1,
+        n_patches_mid: int = 2,
+        n_patches_long: int = 3,
+        crop_jitter_patches: int = 1,
+        stride: int = 5,
+        seed: int = 42,
+    ):
+        self.panel = panel
+        self.config = config
+        self.patch_len = patch_len
+        self.n_ctx = n_patches_context
+        self.n_short = n_patches_short
+        self.n_mid = n_patches_mid
+        self.n_long = n_patches_long
+
+        self.context_len = patch_len * n_patches_context
+        self.short_len   = patch_len * n_patches_short
+        self.mid_len     = patch_len * n_patches_mid
+        self.long_len    = patch_len * n_patches_long
+        self.jitter      = crop_jitter_patches * patch_len  # timesteps
+
+        # Total panel slice needed: jitter room + context + longest target
+        self.window_len = self.jitter + self.context_len + self.long_len
+
+        self.stride = stride
+        self.rng = np.random.default_rng(seed)
+        self.columns = list(panel.columns)
+        self.D = len(self.columns)
+
+        self._valid_starts = self._build_valid_starts()
+
+    def _build_valid_starts(self) -> list[int]:
+        n = len(self.panel)
+        if n < self.window_len:
+            return []
+        missing_threshold = self.config.get("normalization", {}).get(
+            "missing_window_threshold", 0.20
+        )
+        valid = []
+        for i in range(0, n - self.window_len + 1, self.stride):
+            window = self.panel.iloc[i : i + self.window_len]
+            if window.isna().values.mean() <= missing_threshold:
+                valid.append(i)
+        return valid
+
+    def __len__(self) -> int:
+        return len(self._valid_starts)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        base = self._valid_starts[idx]
+        window = self.panel.iloc[base : base + self.window_len]
+
+        values = window.values.astype(np.float32)
+        nan_mask = np.isnan(values)
+        if nan_mask.any():
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                col_medians = np.nanmedian(values, axis=0)
+            col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
+            values = np.where(nan_mask, col_medians[np.newaxis, :], values)
+
+        # Random jitter: shift context start by 0…jitter timesteps
+        jitter_offset = int(self.rng.integers(0, self.jitter + 1))
+        v = values[jitter_offset:]  # [context_len + long_len, D]
+
+        ctx_end   = self.context_len
+        short_end = ctx_end + self.short_len
+        mid_end   = ctx_end + self.mid_len
+        long_end  = ctx_end + self.long_len
+
+        return {
+            "context":      torch.from_numpy(v[:ctx_end]),
+            "target_short": torch.from_numpy(v[ctx_end:short_end]),
+            "target_mid":   torch.from_numpy(v[ctx_end:mid_end]),
+            "target_long":  torch.from_numpy(v[ctx_end:long_end]),
+        }

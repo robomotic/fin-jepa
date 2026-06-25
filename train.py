@@ -28,9 +28,9 @@ import torch.optim as optim
 from loguru import logger
 from torch.utils.data import DataLoader
 
-from data.dataset import FinancialJEPADataset
+from data.dataset import CFJEPADataset, FinancialJEPADataset
 from data.pipeline import build_pipeline, load_config
-from model.jepa import JEPA, JEPAConfig
+from model.jepa import CFJEPA, CFJEPAConfig, JEPA, JEPAConfig
 
 
 # ─── Argument Parsing ─────────────────────────────────────────────────────────
@@ -58,6 +58,8 @@ def parse_args() -> argparse.Namespace:
                    help="Numerator/denominator pair for checkpointing IC (e.g. SPY/HYG)")
     p.add_argument("--probe-horizon",   type=int,   default=20,
                    help="Forward-return horizon in days for checkpointing IC")
+    p.add_argument("--cf-jepa",         action="store_true",
+                   help="Use CF-JEPA (mask-free, multi-horizon) instead of standard JEPA")
     return p.parse_args()
 
 
@@ -85,6 +87,27 @@ def build_datasets(splits: dict, config: dict) -> tuple[FinancialJEPADataset, ..
     return train_ds, val_ds, test_ds
 
 
+def build_cfjepa_datasets(splits: dict, config: dict) -> tuple[CFJEPADataset, ...]:
+    cf = config.get("cf_jepa", {})
+    model_cfg = config.get("model", {})
+    patch_len = model_cfg.get("patch_len", 21)
+    common = dict(
+        config=config,
+        patch_len=patch_len,
+        n_patches_context=model_cfg.get("n_patches_context", 9),
+        n_patches_short=cf.get("n_patches_short", 1),
+        n_patches_mid=cf.get("n_patches_mid", 2),
+        n_patches_long=cf.get("n_patches_long", 3),
+        crop_jitter_patches=cf.get("crop_jitter_patches", 1),
+        stride=5,
+    )
+    train_ds = CFJEPADataset(splits["train"], **common, seed=42)
+    val_ds   = CFJEPADataset(splits["val"],   **common, seed=0)
+    test_ds  = CFJEPADataset(splits["test"],  **common, seed=1)
+    logger.info(f"CF-JEPA dataset sizes: train={len(train_ds)}  val={len(val_ds)}  test={len(test_ds)}")
+    return train_ds, val_ds, test_ds
+
+
 # ─── Training ─────────────────────────────────────────────────────────────────
 
 def train(args: argparse.Namespace) -> None:
@@ -97,7 +120,11 @@ def train(args: argparse.Namespace) -> None:
         force_rebuild=args.force_rebuild,
         run_diagnostics=not args.no_diagnostics,
     )
-    train_ds, val_ds, test_ds = build_datasets(splits, config)
+
+    if args.cf_jepa:
+        train_ds, val_ds, test_ds = build_cfjepa_datasets(splits, config)
+    else:
+        train_ds, val_ds, test_ds = build_datasets(splits, config)
 
     # Full panel for forward-return labels used by the online IC probe
     prices_full = pd.concat(
@@ -105,36 +132,61 @@ def train(args: argparse.Namespace) -> None:
     ).sort_index()
     prices_full = prices_full[~prices_full.index.duplicated(keep="last")]
 
+    collate = _collate_fn_cfjepa if args.cf_jepa else _collate_fn
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=4, pin_memory=True,
-        collate_fn=_collate_fn,
+        collate_fn=collate,
     )
     val_loader = DataLoader(
         val_ds, batch_size=args.batch_size, shuffle=False,
         num_workers=2, pin_memory=True,
-        collate_fn=_collate_fn,
+        collate_fn=collate,
     )
 
     # Model
     n_features = len(train_ds.columns)
     model_cfg = config.get("model", {})
-    jepa_cfg = JEPAConfig(
-        n_features=n_features,
-        patch_len=model_cfg.get("patch_len", 21),
-        n_patches_context=model_cfg.get("n_patches_context", 9),
-        n_patches_target=model_cfg.get("n_patches_target", 3),
-        d_model=model_cfg.get("d_model", 256),
-        n_heads=model_cfg.get("n_heads", 8),
-        n_encoder_layers=model_cfg.get("n_layers", 6),
-        d_ff=model_cfg.get("d_ff", 1024),
-        dropout=model_cfg.get("dropout", 0.1),
-        tau_start=model_cfg.get("tau_start", 0.996),
-        tau_end=model_cfg.get("tau_end", 0.9999),
-    )
+    cf_cfg    = config.get("cf_jepa", {})
 
-    jepa = JEPA(jepa_cfg).to(device)
-    logger.info(f"JEPA parameters: {sum(p.numel() for p in jepa.parameters()):,}")
+    if args.cf_jepa:
+        jepa_cfg = CFJEPAConfig(
+            n_features=n_features,
+            patch_len=model_cfg.get("patch_len", 21),
+            n_patches_context=model_cfg.get("n_patches_context", 9),
+            n_patches_short=cf_cfg.get("n_patches_short", 1),
+            n_patches_mid=cf_cfg.get("n_patches_mid", 2),
+            n_patches_long=cf_cfg.get("n_patches_long", 3),
+            crop_jitter_patches=cf_cfg.get("crop_jitter_patches", 1),
+            d_model=model_cfg.get("d_model", 256),
+            n_heads=model_cfg.get("n_heads", 8),
+            n_encoder_layers=model_cfg.get("n_layers", 6),
+            d_ff=model_cfg.get("d_ff", 1024),
+            dropout=model_cfg.get("dropout", 0.1),
+            tau_start=model_cfg.get("tau_start", 0.996),
+            tau_end=model_cfg.get("tau_end", 0.9999),
+            w_short=cf_cfg.get("w_short", 1.0),
+            w_mid=cf_cfg.get("w_mid", 1.0),
+            w_long=cf_cfg.get("w_long", 1.0),
+        )
+        jepa = CFJEPA(jepa_cfg).to(device)
+        logger.info(f"CF-JEPA parameters: {sum(p.numel() for p in jepa.parameters()):,}")
+    else:
+        jepa_cfg = JEPAConfig(
+            n_features=n_features,
+            patch_len=model_cfg.get("patch_len", 21),
+            n_patches_context=model_cfg.get("n_patches_context", 9),
+            n_patches_target=model_cfg.get("n_patches_target", 3),
+            d_model=model_cfg.get("d_model", 256),
+            n_heads=model_cfg.get("n_heads", 8),
+            n_encoder_layers=model_cfg.get("n_layers", 6),
+            d_ff=model_cfg.get("d_ff", 1024),
+            dropout=model_cfg.get("dropout", 0.1),
+            tau_start=model_cfg.get("tau_start", 0.996),
+            tau_end=model_cfg.get("tau_end", 0.9999),
+        )
+        jepa = JEPA(jepa_cfg).to(device)
+        logger.info(f"JEPA parameters: {sum(p.numel() for p in jepa.parameters()):,}")
 
     # Fix tau annealing to span the actual number of optimizer steps
     actual_steps = len(train_loader) * args.epochs
@@ -183,11 +235,14 @@ def train(args: argparse.Namespace) -> None:
         train_metrics: dict[str, float] = {}
 
         for batch in train_loader:
-            ctx = batch["context"].to(device)
-            tgt = batch["target"].to(device)
-
             optimizer.zero_grad()
-            loss, metrics = jepa.training_step(ctx, tgt)
+            if isinstance(jepa, CFJEPA):
+                batch_dev = {k: v.to(device) for k, v in batch.items()}
+                loss, metrics = jepa.training_step(batch_dev)
+            else:
+                ctx = batch["context"].to(device)
+                tgt = batch["target"].to(device)
+                loss, metrics = jepa.training_step(ctx, tgt)
 
             if not torch.isfinite(loss):
                 logger.warning("NaN/Inf loss — skipping batch")
@@ -215,8 +270,12 @@ def train(args: argparse.Namespace) -> None:
             and ((epoch + 1) % args.probe_every == 0 or epoch == 0)
         )
         if run_probe:
+            # For CF-JEPA use a standard FinancialJEPADataset for the probe
+            # (the online encoder signature is identical to JEPA's encoder)
+            probe_train_ds = train_ds if not isinstance(jepa, CFJEPA) else _make_probe_ds(splits, config)
+            probe_val_ds   = val_ds   if not isinstance(jepa, CFJEPA) else _make_probe_ds(splits, config, split="val")
             val_ic = _val_probe_ic(
-                jepa, train_ds, val_ds, prices_full, device,
+                jepa, probe_train_ds, probe_val_ds, prices_full, device,
                 probe_num, probe_den, args.probe_horizon,
             )
 
@@ -266,7 +325,29 @@ def train(args: argparse.Namespace) -> None:
         best_ckpt = torch.load(best_ckpt_path, map_location=device)
         jepa.load_state_dict(best_ckpt["model"])
         logger.info(f"  best epoch={best_ckpt.get('epoch', '?')}, val_ic={best_ckpt.get('best_val_ic', float('nan')):+.4f}")
-    _run_all_experiments(jepa, splits, train_ds, val_ds, test_ds, config, device)
+
+    # Experiments always use standard sliding-window datasets (encoder signature is identical)
+    if isinstance(jepa, CFJEPA):
+        exp_train_ds = _make_probe_ds(splits, config, "train")
+        exp_val_ds   = _make_probe_ds(splits, config, "val")
+        exp_test_ds  = _make_probe_ds(splits, config, "test")
+    else:
+        exp_train_ds, exp_val_ds, exp_test_ds = train_ds, val_ds, test_ds
+
+    _run_all_experiments(jepa, splits, exp_train_ds, exp_val_ds, exp_test_ds, config, device)
+
+
+def _make_probe_ds(splits: dict, config: dict, split: str = "train") -> FinancialJEPADataset:
+    """Build a standard FinancialJEPADataset for the online IC probe when using CF-JEPA."""
+    model_cfg = config.get("model", {})
+    return FinancialJEPADataset(
+        splits[split],
+        config=config,
+        patch_len=model_cfg.get("patch_len", 21),
+        n_patches_context=model_cfg.get("n_patches_context", 9),
+        n_patches_target=model_cfg.get("n_patches_target", 3),
+        stride=5,
+    )
 
 
 @torch.no_grad()
@@ -295,19 +376,24 @@ def _val_probe_ic(
 
 
 @torch.no_grad()
-def evaluate(jepa: JEPA, loader: DataLoader, device: torch.device) -> float:
+def evaluate(jepa, loader: DataLoader, device: torch.device) -> float:
     jepa.eval()
     total_loss, n = 0.0, 0
     from model.jepa import vicreg_loss
     for batch in loader:
-        ctx = batch["context"].to(device)
-        tgt = batch["target"].to(device)
-        z_pred, z_target = jepa(ctx, tgt)
-        loss, _ = vicreg_loss(z_pred, z_target.detach(),
-                               lambda_inv=jepa.cfg.lambda_inv,
-                               lambda_var=jepa.cfg.lambda_var,
-                               lambda_cov=jepa.cfg.lambda_cov)
-        total_loss += loss.item()
+        if isinstance(jepa, CFJEPA):
+            batch_dev = {k: v.to(device) for k, v in batch.items()}
+            _, metrics = jepa.training_step(batch_dev)
+            total_loss += metrics["loss_total"]
+        else:
+            ctx = batch["context"].to(device)
+            tgt = batch["target"].to(device)
+            z_pred, z_target = jepa(ctx, tgt)
+            loss, _ = vicreg_loss(z_pred, z_target.detach(),
+                                   lambda_inv=jepa.cfg.lambda_inv,
+                                   lambda_var=jepa.cfg.lambda_var,
+                                   lambda_cov=jepa.cfg.lambda_cov)
+            total_loss += loss.item()
         n += 1
     return total_loss / max(n, 1)
 
@@ -318,6 +404,15 @@ def _collate_fn(samples):
     mask    = torch.stack([s["mask"]    for s in samples])
     return {"context": context, "target": target, "mask": mask,
             "meta": [s["meta"] for s in samples]}
+
+
+def _collate_fn_cfjepa(samples):
+    return {
+        "context":      torch.stack([s["context"]      for s in samples]),
+        "target_short": torch.stack([s["target_short"] for s in samples]),
+        "target_mid":   torch.stack([s["target_mid"]   for s in samples]),
+        "target_long":  torch.stack([s["target_long"]  for s in samples]),
+    }
 
 
 # ─── Post-Training Experiments ────────────────────────────────────────────────

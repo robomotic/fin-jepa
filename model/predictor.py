@@ -92,3 +92,75 @@ class Predictor(nn.Module):
         out = self.norm(out)
         out = self.output_proj(out)           # [B, N_tgt, d_model]
         return out
+
+
+class CFPredictor(nn.Module):
+    """Multi-horizon predictor for CF-JEPA (mask-free).
+
+    Replaces learned mask tokens with per-horizon embeddings. The predictor
+    receives context latents and a horizon_id (0=short, 1=mid, 2=long), and
+    predicts target patch latents using cross-attention over the context.
+
+    Eliminating the single shared mask token forces the model to rely on
+    temporal position and horizon identity rather than a generic placeholder.
+    """
+
+    N_HORIZONS = 3  # short / mid / long
+
+    def __init__(
+        self,
+        d_model: int = 256,
+        predictor_d_model: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        d_ff: int = 512,
+        dropout: float = 0.1,
+        max_patches: int = 64,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.predictor_d_model = predictor_d_model
+
+        self.input_proj = nn.Linear(d_model, predictor_d_model)
+
+        # One embedding per horizon type — replaces the single mask token
+        self.horizon_embed = nn.Embedding(self.N_HORIZONS, predictor_d_model)
+
+        self.pos_enc = SinusoidalPositionalEncoding(
+            predictor_d_model, max_len=max_patches, dropout=dropout
+        )
+
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=predictor_d_model,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
+        self.norm = nn.LayerNorm(predictor_d_model)
+        self.output_proj = nn.Linear(predictor_d_model, d_model)
+
+    def forward(
+        self,
+        context_latents: torch.Tensor,  # [B, N_ctx, d_model]
+        n_target: int,
+        horizon_id: int,                # 0=short, 1=mid, 2=long
+    ) -> torch.Tensor:                  # [B, N_tgt, d_model]
+        B, N_ctx, _ = context_latents.shape
+        device = context_latents.device
+
+        memory = self.input_proj(context_latents)  # [B, N_ctx, pred_d]
+
+        # Horizon embedding broadcast over target patches
+        hid = torch.full((B, n_target), horizon_id, dtype=torch.long, device=device)
+        h_embed = self.horizon_embed(hid)  # [B, N_tgt, pred_d]
+
+        # Positional encoding offset by context length
+        pos = self.pos_enc.pe[0, N_ctx : N_ctx + n_target]  # [N_tgt, pred_d]
+        tgt = h_embed + pos.unsqueeze(0)
+
+        out = self.transformer(tgt, memory)
+        out = self.norm(out)
+        return self.output_proj(out)  # [B, N_tgt, d_model]

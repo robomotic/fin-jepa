@@ -37,7 +37,7 @@ import torch
 from loguru import logger
 
 from data.dataset import FinancialJEPADataset
-from model.jepa import JEPA
+from model.jepa import CFJEPA, JEPA
 
 
 @torch.no_grad()
@@ -52,6 +52,26 @@ def _cosine_sim_batch(z_pred: torch.Tensor, z_target: torch.Tensor) -> np.ndarra
     p_norm = p / (p.norm(dim=1, keepdim=True) + 1e-8)
     t_norm = t / (t.norm(dim=1, keepdim=True) + 1e-8)
     return (p_norm * t_norm).sum(dim=1).cpu().numpy()
+
+
+@torch.no_grad()
+def _forward_exp5(
+    model: "JEPA | CFJEPA",
+    ctx: torch.Tensor,   # [B, T_ctx, D]
+    tgt: torch.Tensor,   # [B, T_tgt, D]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Unified forward for Exp 5 that handles both JEPA and CFJEPA.
+
+    For CFJEPA, tgt is used as all three horizon targets; the long-horizon
+    prediction is returned (same number of patches as the standard tgt window).
+    """
+    if isinstance(model, CFJEPA):
+        outputs = model(ctx, tgt, tgt, tgt)
+        # outputs = (z_pred_s, z_pred_m, z_pred_l, z_tgt_s, z_tgt_m, z_tgt_l)
+        z_pred   = outputs[2]  # long-horizon prediction  [B, N_long, d]
+        z_target = outputs[5]  # long-horizon target       [B, N_long, d]
+        return z_pred, z_target
+    return model(ctx, tgt)
 
 
 def run_experiment_5(
@@ -133,11 +153,11 @@ def run_experiment_5(
         ctx_masked[:, :, us10y_idx] = 0.0
 
         # Trained model
-        z_pred, z_target = jepa(ctx_masked, tgt)
+        z_pred, z_target = _forward_exp5(jepa, ctx_masked, tgt)
         trained_cos_sims.extend(_cosine_sim_batch(z_pred, z_target).tolist())
 
         # Random baseline
-        z_pred_r, z_target_r = random_jepa(ctx_masked, tgt)
+        z_pred_r, z_target_r = _forward_exp5(random_jepa, ctx_masked, tgt)
         random_cos_sims.extend(_cosine_sim_batch(z_pred_r, z_target_r).tolist())
 
     trained_mean = float(np.mean(trained_cos_sims))
